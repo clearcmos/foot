@@ -1,4 +1,7 @@
 /bld/
+/build/
 /pkg/
 /src/
 /subprojects/*/
+*.pkg.tar.zst
+/foot-custom/
