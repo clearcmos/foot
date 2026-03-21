@@ -1,6 +1,6 @@
 pkgname=foot-custom
 pkgdesc='A fast, lightweight and minimalistic Wayland terminal emulator (fork with tabs)'
-pkgver=1.26.1.r0.eedb08b
+pkgver=1.26.1.r0.05c6b5e7
 pkgrel=1
 arch=('x86_64')
 url='https://github.com/clearcmos/foot'
@@ -27,7 +27,7 @@ pkgver() {
 }
 
 build() {
-    arch-meson "$pkgname" build
+    arch-meson "$pkgname" build --wrap-mode default
     meson compile -C build
 }
 
