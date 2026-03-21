@@ -370,6 +370,7 @@ enum term_surface {
     TERM_SURF_BUTTON_MINIMIZE,
     TERM_SURF_BUTTON_MAXIMIZE,
     TERM_SURF_BUTTON_CLOSE,
+    TERM_SURF_TAB_BAR,
 };
 
 enum overlay_style {
@@ -844,12 +845,14 @@ struct terminal {
 };
 
 struct config;
+struct wl_window;
 struct terminal *term_init(
     const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     struct wayland *wayl, const char *foot_exe, const char *cwd,
     const char *token, const char *pty_path,
     int argc, char *const *argv, const char *const *envp,
-    void (*shutdown_cb)(void *data, int exit_code), void *shutdown_data);
+    void (*shutdown_cb)(void *data, int exit_code), void *shutdown_data,
+    struct wl_window *existing_window);
 
 bool term_shutdown(struct terminal *term);
 int term_destroy(struct terminal *term);

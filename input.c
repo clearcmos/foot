@@ -42,6 +42,7 @@
 #include "vt.h"
 #include "xkbcommon-vmod.h"
 #include "xmalloc.h"
+#include "tab.h"
 #include "xsnprintf.h"
 
 struct pipe_context {
@@ -209,6 +210,29 @@ execute_binding(struct seat *seat, struct terminal *term,
 
     case BIND_ACTION_SPAWN_TERMINAL:
         term_spawn_new(term);
+        return true;
+
+    case BIND_ACTION_TAB_NEW:
+        tab_new(term);
+        return true;
+
+    case BIND_ACTION_TAB_CLOSE:
+        if (!tab_close_active(term)) {
+            /* Last tab - close window */
+            term_shutdown(term);
+        }
+        return true;
+
+    case BIND_ACTION_TAB_NEXT:
+        tab_next(term);
+        return true;
+
+    case BIND_ACTION_TAB_PREV:
+        tab_prev(term);
+        return true;
+
+    case BIND_ACTION_TAB_UNDO_CLOSE:
+        tab_undo_close(term);
         return true;
 
     case BIND_ACTION_MINIMIZE:
@@ -2515,6 +2539,9 @@ wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
         render_refresh_csd(term);
         break;
 
+    case TERM_SURF_TAB_BAR:
+        break;
+
     case TERM_SURF_NONE:
         BUG("Invalid surface type");
         break;
@@ -2606,6 +2633,7 @@ wl_pointer_leave(void *data, struct wl_pointer *wl_pointer,
         case TERM_SURF_BORDER_RIGHT:
         case TERM_SURF_BORDER_TOP:
         case TERM_SURF_BORDER_BOTTOM:
+        case TERM_SURF_TAB_BAR:
             break;
         }
 
@@ -2690,6 +2718,7 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
     case TERM_SURF_BORDER_RIGHT:
     case TERM_SURF_BORDER_TOP:
     case TERM_SURF_BORDER_BOTTOM:
+    case TERM_SURF_TAB_BAR:
         break;
     }
 
@@ -2708,6 +2737,7 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 
     switch (surf_kind) {
     case TERM_SURF_NONE:
+    case TERM_SURF_TAB_BAR:
         break;
 
     case TERM_SURF_BUTTON_MINIMIZE:
@@ -3237,6 +3267,21 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
             state == WL_POINTER_BUTTON_STATE_RELEASED)
         {
             term_shutdown(term);
+        }
+        break;
+
+    case TERM_SURF_TAB_BAR:
+        if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_RELEASED) {
+            struct wl_window *win = term->window;
+            struct tab_bar *tb = &win->tab_bar;
+            if (tb->tab_count > 1) {
+                int tab_width = term->width / tb->tab_count;
+                int click_x = (int)(seat->mouse.x * term->scale);
+                int clicked_tab = click_x / tab_width;
+                if (clicked_tab >= tb->tab_count)
+                    clicked_tab = tb->tab_count - 1;
+                tab_switch_to(win, clicked_tab);
+            }
         }
         break;
 

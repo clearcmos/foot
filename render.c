@@ -43,6 +43,7 @@
 #include "srgb.h"
 #include "url-mode.h"
 #include "util.h"
+#include "tab.h"
 #include "xmalloc.h"
 
 #define TIME_SCROLL_DAMAGE 0
@@ -2531,6 +2532,145 @@ render_csd_title(struct terminal *term, const struct csd_data *info,
     render_osd(term, surf, win->csd.font, buf, title_text, fg, bg, margin);
     csd_commit(term, &surf->surface, buf);
     free(_title_text);
+}
+
+static void
+render_tab_bar(struct terminal *term)
+{
+    struct wl_window *win = term->window;
+    struct tab_bar *tb = &win->tab_bar;
+
+    if (!tb->dirty || tb->tab_count <= 1)
+        return;
+
+    if (tb->surface == NULL || tb->chain == NULL)
+        return;
+
+    tb->dirty = false;
+
+    const float scale = term->scale;
+    const int bar_height = tab_bar_height(term);
+    const int buf_width = term->width;
+    const int buf_height = (int)roundf(bar_height * scale);
+
+    if (buf_width <= 0 || buf_height <= 0)
+        return;
+
+    struct buffer *buf = shm_get_buffer(tb->chain, buf_width, buf_height);
+    if (buf == NULL)
+        return;
+
+    const bool gamma_correct = wayl_do_linear_blending(term->wl, term->conf);
+
+    /* Background */
+    uint32_t bar_bg = 0xff000000 | (term->colors.bg & 0x00ffffff);
+    uint16_t alpha = bar_bg >> 24 | (bar_bg >> 24 << 8);
+    pixman_color_t bg_color = color_hex_to_pixman_with_alpha(bar_bg, alpha, gamma_correct);
+    pixman_image_fill_rectangles(
+        PIXMAN_OP_SRC, buf->pix[0], &bg_color, 1,
+        &(pixman_rectangle16_t){0, 0, buf_width, buf_height});
+
+    /* Render each tab label */
+    const int tab_width = buf_width / tb->tab_count;
+    int x = 0;
+    int idx = 0;
+
+    struct fcft_font *font = term->fonts[0];
+    if (font == NULL)
+        goto commit;
+
+    tll_foreach(tb->tabs, it) {
+        bool is_active = (&it->item == tb->active);
+
+        /* Tab background */
+        uint32_t tab_bg = is_active
+            ? (0xff000000 | term->colors.fg)
+            : bar_bg;
+        uint32_t tab_fg = is_active
+            ? (0xff000000 | term->colors.bg)
+            : (0xff000000 | term->colors.fg);
+
+        if (is_active) {
+            pixman_color_t active_bg = color_hex_to_pixman_with_alpha(tab_bg, 0xffff, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &active_bg, 1,
+                &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
+        }
+
+        /* Tab label text */
+        const char *title = it->item.title != NULL ? it->item.title : "shell";
+        char32_t *title32 = ambstoc32(title);
+        if (title32 != NULL) {
+            pixman_color_t fg = color_hex_to_pixman(tab_fg, gamma_correct);
+            pixman_image_t *src = pixman_image_create_solid_fill(&fg);
+
+            const int text_margin = font->max_advance.x / 2;
+            int text_x = x + text_margin;
+            const int max_text_x = x + tab_width - text_margin;
+
+            /* Baseline */
+            const int font_height = max(font->height, font->ascent + font->descent);
+            const int glyph_top_y = round((buf_height - font_height) / 2.);
+            const int baseline_y = glyph_top_y + font->ascent;
+
+            for (const char32_t *c = title32; *c != 0 && text_x < max_text_x; c++) {
+                const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(
+                    font, *c, term->font_subpixel);
+                if (glyph == NULL)
+                    continue;
+
+                if (text_x + glyph->advance.x > max_text_x)
+                    break;
+
+                if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
+                    pixman_image_composite32(
+                        PIXMAN_OP_OVER, glyph->pix, NULL, buf->pix[0],
+                        0, 0, 0, 0,
+                        text_x + glyph->x, baseline_y - glyph->y,
+                        glyph->width, glyph->height);
+                } else {
+                    pixman_image_composite32(
+                        PIXMAN_OP_OVER, src, glyph->pix, buf->pix[0],
+                        0, 0, 0, 0,
+                        text_x + glyph->x, baseline_y - glyph->y,
+                        glyph->width, glyph->height);
+                }
+
+                text_x += glyph->advance.x;
+            }
+
+            pixman_image_unref(src);
+            free(title32);
+        }
+
+        /* Separator line */
+        if (idx < tb->tab_count - 1) {
+            uint32_t sep_color = 0xff000000 | term->colors.fg;
+            pixman_color_t sep = color_hex_to_pixman_with_alpha(sep_color, 0x4000, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_OVER, buf->pix[0], &sep, 1,
+                &(pixman_rectangle16_t){x + tab_width - 1, 2, 1, buf_height - 4});
+        }
+
+        x += tab_width;
+        idx++;
+    }
+
+commit:
+    /* Position below CSD title (or at top) */
+    {
+        int y = 0;
+        if (wayl_win_csd_titlebar_visible(win))
+            y = (int)roundf(term->conf->csd.title_height * scale);
+
+        wl_subsurface_set_position(tb->surface->sub,
+            0, (int)roundf(y / scale));
+    }
+
+    wayl_surface_scale(win, &tb->surface->surface, buf, scale);
+    wl_surface_attach(tb->surface->surface.surf, buf->wl_buf, 0, 0);
+    wl_surface_damage_buffer(tb->surface->surface.surf, 0, 0, buf_width, buf_height);
+    wl_surface_commit(tb->surface->surface.surf);
 }
 
 static void
@@ -5158,6 +5298,8 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
                 render_csd(term);
                 quirk_weston_csd_off(term);
             }
+            if (term->window->tab_bar.dirty)
+                render_tab_bar(term);
             if (search)
                 render_search_box(term);
             if (urls)

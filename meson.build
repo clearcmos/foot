@@ -333,6 +333,7 @@ executable(
   'server.c', 'server.h', 'client-protocol.h',
   'shm.c', 'shm.h',
   'slave.c', 'slave.h',
+  'tab.c', 'tab.h',
   'spawn.c', 'spawn.h',
   'tokenize.c', 'tokenize.h',
   'unicode-mode.c', 'unicode-mode.h',

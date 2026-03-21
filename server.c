@@ -392,7 +392,7 @@ fdm_client(struct fdm *fdm, int fd, int events, void *data)
         conf != NULL ? conf : server->conf,
         server->fdm, server->reaper, server->wayl, "footclient", cwd, token,
         NULL, cdata.argc, argv, (const char *const *)envp,
-        &term_shutdown_handler, instance);
+        &term_shutdown_handler, instance, NULL);
 
     if (instance->terminal == NULL) {
         LOG_ERR("failed to instantiate new terminal");

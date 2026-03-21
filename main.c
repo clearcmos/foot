@@ -627,7 +627,7 @@ main(int argc, char *const *argv)
     if (!as_server && (term = term_init(
                            &conf, fdm, reaper, wayl, "foot", cwd, token, pty_path,
                            argc, argv, NULL,
-                           &term_shutdown_cb, &shutdown_ctx)) == NULL) {
+                           &term_shutdown_cb, &shutdown_ctx, NULL)) == NULL) {
         goto out;
     }
     free(_cwd);

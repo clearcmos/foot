@@ -2012,6 +2012,7 @@ wayl_win_init(struct terminal *term, const char *token)
     }
 
     win->term = term;
+    tab_bar_init(&win->tab_bar, 10000);  /* 10 second undo timeout */
     win->csd_mode = CSD_UNKNOWN;
     win->csd.move_timeout_fd = -1;
     win->resize_timeout_fd = -1;

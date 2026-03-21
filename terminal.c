@@ -45,6 +45,7 @@
 #include "util.h"
 #include "vt.h"
 #include "xmalloc.h"
+#include "tab.h"
 #include "xsnprintf.h"
 
 #define PTMX_TIMING 0
@@ -1170,7 +1171,8 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
           struct wayland *wayl, const char *foot_exe, const char *cwd,
           const char *token, const char *pty_path,
           int argc, char *const *argv, const char *const *envp,
-          void (*shutdown_cb)(void *data, int exit_code), void *shutdown_data)
+          void (*shutdown_cb)(void *data, int exit_code), void *shutdown_data,
+          struct wl_window *existing_window)
 {
     int ptmx = -1;
     int flash_fd = -1;
@@ -1449,9 +1451,18 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     xassert(tll_length(term->wl->monitors) > 0);
     term->scale = tll_front(term->wl->monitors).scale;
 
-    /* Initialize the Wayland window backend */
-    if ((term->window = wayl_win_init(term, token)) == NULL)
-        goto err;
+    if (existing_window != NULL) {
+        /* Reuse existing window (new tab) */
+        term->window = existing_window;
+        term->scale = existing_window->term->scale;
+    } else {
+        /* Initialize the Wayland window backend */
+        if ((term->window = wayl_win_init(term, token)) == NULL)
+            goto err;
+
+        /* Register as the first tab */
+        tab_bar_add_initial(&term->window->tab_bar, term);
+    }
 
     /* Load fonts */
     if (!term_font_dpi_changed(term, 0.))
@@ -1464,17 +1475,19 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     /* Let the Wayland backend know we exist */
     tll_push_back(wayl->terms, term);
 
-    switch (conf->startup_mode) {
-    case STARTUP_WINDOWED:
-        break;
+    if (existing_window == NULL) {
+        switch (conf->startup_mode) {
+        case STARTUP_WINDOWED:
+            break;
 
-    case STARTUP_MAXIMIZED:
-        xdg_toplevel_set_maximized(term->window->xdg_toplevel);
-        break;
+        case STARTUP_MAXIMIZED:
+            xdg_toplevel_set_maximized(term->window->xdg_toplevel);
+            break;
 
-    case STARTUP_FULLSCREEN:
-        xdg_toplevel_set_fullscreen(term->window->xdg_toplevel, NULL);
-        break;
+        case STARTUP_FULLSCREEN:
+            xdg_toplevel_set_fullscreen(term->window->xdg_toplevel, NULL);
+            break;
+        }
     }
 
     if (!initialize_render_workers(term))
@@ -1837,7 +1850,11 @@ term_destroy(struct terminal *term)
         fdm_del(term->fdm, term->shutdown.terminate_timeout_fd);
 
     if (term->window != NULL) {
-        wayl_win_destroy(term->window);
+        /* Only destroy the window if this is the last tab */
+        if (tab_count(term->window) <= 1) {
+            tab_bar_destroy(&term->window->tab_bar, term->fdm);
+            wayl_win_destroy(term->window);
+        }
         term->window = NULL;
     }
 
@@ -3631,6 +3648,7 @@ term_xcursor_update_for_seat(struct terminal *term, struct seat *seat)
     case TERM_SURF_BUTTON_MINIMIZE:
     case TERM_SURF_BUTTON_MAXIMIZE:
     case TERM_SURF_BUTTON_CLOSE:
+    case TERM_SURF_TAB_BAR:
         shape = CURSOR_SHAPE_LEFT_PTR;
         break;
 
@@ -3678,6 +3696,10 @@ term_set_window_title(struct terminal *term, const char *title)
     term->window_title = xstrdup(title);
     render_refresh_title(term);
     term->window_title_has_been_set = true;
+
+    /* Update tab bar title */
+    if (term->window != NULL)
+        tab_update_title(term->window, term, title);
 }
 
 void
@@ -4445,6 +4467,9 @@ term_surface_kind(const struct terminal *term, const struct wl_surface *surface)
         return TERM_SURF_BUTTON_MAXIMIZE;
     else if (surface == term->window->csd.surface[CSD_SURF_CLOSE].surface.surf)
         return TERM_SURF_BUTTON_CLOSE;
+    else if (term->window->tab_bar.surface != NULL &&
+             surface == term->window->tab_bar.surface->surface.surf)
+        return TERM_SURF_TAB_BAR;
     else
         return TERM_SURF_NONE;
 }

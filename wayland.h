@@ -36,6 +36,7 @@
 #include "config.h"
 #include "cursor-shape.h"
 #include "fdm.h"
+#include "tab.h"
 
 /* Forward declarations */
 struct terminal;
@@ -444,6 +445,8 @@ struct wl_window {
     } configure;
 
     int resize_timeout_fd;
+
+    struct tab_bar tab_bar;
 };
 
 struct terminal;
