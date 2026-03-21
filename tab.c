@@ -158,7 +158,8 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
         render_resize(new_term, logical_width, logical_height, RESIZE_FORCE);
     }
 
-    /* Update seat focus to point to new terminal */
+    /* Transfer keyboard focus to new terminal */
+    bool had_focus = old_term->kbd_focus;
     tll_foreach(new_term->wl->seats, it) {
         if (it->item.kbd_focus == old_term)
             it->item.kbd_focus = new_term;
@@ -166,6 +167,10 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
             it->item.mouse_focus = new_term;
         if (it->item.ime_focus == old_term)
             it->item.ime_focus = new_term;
+    }
+    if (had_focus) {
+        old_term->kbd_focus = false;
+        new_term->kbd_focus = true;
     }
 
     /* Trigger full redraw of the new tab */
