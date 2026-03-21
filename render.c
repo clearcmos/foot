@@ -2000,8 +2000,12 @@ render_overlay(struct terminal *term)
         break;
     }
 
+    const bool has_flash_message =
+        style == OVERLAY_FLASH && term->flash.message != NULL;
+
     const bool single_pixel =
         (style == OVERLAY_UNICODE_MODE || style == OVERLAY_FLASH) &&
+        !has_flash_message &&
         term->wl->single_pixel_manager != NULL &&
         overlay->surface.viewport != NULL;
 
@@ -2134,7 +2138,8 @@ render_overlay(struct terminal *term)
     }
 
     else if (buf == term->render.last_overlay_buf &&
-             style == term->render.last_overlay_style)
+             style == term->render.last_overlay_style &&
+             !has_flash_message)
     {
         xassert(style == OVERLAY_FLASH || style == OVERLAY_UNICODE_MODE);
         shm_did_not_use_buf(buf);
@@ -2144,9 +2149,72 @@ render_overlay(struct terminal *term)
         damage_bounds = (pixman_box32_t){0, 0, buf->width, buf->height};
     }
 
-    pixman_image_fill_rectangles(
-        PIXMAN_OP_SRC, buf->pix[0], &color, 1,
-        &(pixman_rectangle16_t){0, 0, term->width, term->height});
+    if (has_flash_message) {
+        /* Transparent background - only the pill will be visible */
+        pixman_color_t transparent = {0, 0, 0, 0};
+        pixman_image_fill_rectangles(
+            PIXMAN_OP_SRC, buf->pix[0], &transparent, 1,
+            &(pixman_rectangle16_t){0, 0, term->width, term->height});
+    } else {
+        pixman_image_fill_rectangles(
+            PIXMAN_OP_SRC, buf->pix[0], &color, 1,
+            &(pixman_rectangle16_t){0, 0, term->width, term->height});
+    }
+
+    /* Render flash message text centered on overlay */
+    if (has_flash_message && term->fonts[0] != NULL) {
+        const bool gc = wayl_do_linear_blending(term->wl, term->conf);
+        struct fcft_font *font = term->fonts[0];
+        char32_t *msg32 = ambstoc32(term->flash.message);
+        if (msg32 != NULL) {
+            /* Measure text width */
+            int text_width = 0;
+            for (const char32_t *c = msg32; *c; c++) {
+                const struct fcft_glyph *g = fcft_rasterize_char_utf32(
+                    font, *c, term->font_subpixel);
+                if (g) text_width += g->advance.x;
+            }
+
+            /* Center position */
+            int x = (term->width - text_width) / 2;
+            int font_height = max(font->height, font->ascent + font->descent);
+            int y_top = (term->height - font_height) / 2;
+            int baseline = y_top + font->ascent;
+
+            /* Draw background pill */
+            int pad = font->max_advance.x;
+            pixman_color_t pill_bg = color_hex_to_pixman_with_alpha(
+                0xff333333, 0xd000, gc);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_OVER, buf->pix[0], &pill_bg, 1,
+                &(pixman_rectangle16_t){
+                    x - pad, y_top - pad/2,
+                    text_width + pad*2, font_height + pad});
+
+            /* Draw text */
+            pixman_color_t text_color = color_hex_to_pixman(0xffeeeeee, gc);
+            pixman_image_t *src = pixman_image_create_solid_fill(&text_color);
+            for (const char32_t *c = msg32; *c; c++) {
+                const struct fcft_glyph *g = fcft_rasterize_char_utf32(
+                    font, *c, term->font_subpixel);
+                if (g == NULL) continue;
+                if (pixman_image_get_format(g->pix) == PIXMAN_a8r8g8b8) {
+                    pixman_image_composite32(
+                        PIXMAN_OP_OVER, g->pix, NULL, buf->pix[0],
+                        0, 0, 0, 0, x + g->x, baseline - g->y,
+                        g->width, g->height);
+                } else {
+                    pixman_image_composite32(
+                        PIXMAN_OP_OVER, src, g->pix, buf->pix[0],
+                        0, 0, 0, 0, x + g->x, baseline - g->y,
+                        g->width, g->height);
+                }
+                x += g->advance.x;
+            }
+            pixman_image_unref(src);
+            free(msg32);
+        }
+    }
 
     quirk_weston_subsurface_desync_on(overlay->sub);
     wayl_surface_scale(
@@ -4845,7 +4913,7 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
     const int grid_width = new_cols * term->cell_width;
     const int grid_height = new_rows * term->cell_height;
     const int total_x_pad = term->width - grid_width;
-    const int total_y_pad = term->height - grid_height;
+    const int total_y_pad = term->height - grid_height - tb_h;
 
     const enum center_when center = term->conf->center_when;
     const bool centered_padding =

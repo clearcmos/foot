@@ -56,6 +56,7 @@ enum bind_action_normal {
     BIND_ACTION_CURSOR_LEFT,
     BIND_ACTION_CURSOR_RIGHT,
     BIND_ACTION_DELETE_PREV_WORD,
+    BIND_ACTION_SELECT_ALL,
 
     /* Mouse specific actions - i.e. they require a mouse coordinate */
     BIND_ACTION_SCROLLBACK_UP_MOUSE,
@@ -69,7 +70,7 @@ enum bind_action_normal {
     BIND_ACTION_SELECT_QUOTE,
     BIND_ACTION_SELECT_ROW,
 
-    BIND_ACTION_KEY_COUNT = BIND_ACTION_DELETE_PREV_WORD + 1,
+    BIND_ACTION_KEY_COUNT = BIND_ACTION_SELECT_ALL + 1,
     BIND_ACTION_COUNT = BIND_ACTION_SELECT_ROW + 1,
 };
 

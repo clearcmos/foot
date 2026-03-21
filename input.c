@@ -257,6 +257,21 @@ execute_binding(struct seat *seat, struct terminal *term,
         term_to_slave(term, "\x17", 1);  /* Ctrl+W = 0x17 */
         return true;
 
+    case BIND_ACTION_SELECT_ALL: {
+        /* Copy entire scrollback + visible content to clipboard */
+        char *text = NULL;
+        size_t len = 0;
+        if (term_scrollback_to_text(term, &text, &len) && text != NULL) {
+            text_to_clipboard(seat, term, text, serial);
+            free(term->flash.message);
+            term->flash.message = xstrdup("Copied to clipboard");
+            term_flash(term, 500);
+            term_damage_view(term);
+            render_refresh(term);
+        }
+        return true;
+    }
+
     case BIND_ACTION_MINIMIZE:
         xdg_toplevel_set_minimized(term->window->xdg_toplevel);
         return true;

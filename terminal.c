@@ -425,6 +425,8 @@ fdm_flash(struct fdm *fdm, int fd, int events, void *data)
             (unsigned long long)expiration_count);
 
     term->flash.active = false;
+    free(term->flash.message);
+    term->flash.message = NULL;
     render_overlay(term);
 
     // since the overlay surface is synced with the main window surface, we have

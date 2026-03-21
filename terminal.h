@@ -568,6 +568,7 @@ struct terminal {
     struct {
         bool active;
         int fd;
+        char *message;  /* optional text to show during flash */
     } flash;
 
     struct {
