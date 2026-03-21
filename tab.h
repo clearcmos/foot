@@ -33,8 +33,11 @@ struct tab_bar {
     closed_tab_list_t closed;
     struct wayl_sub_surface *surface;
     struct buffer_chain *chain;
+    struct fcft_font *font;      /* fixed font for tab bar, not affected by zoom */
+    int height;                  /* fixed height in pixels, set on first tab creation */
     int tab_count;
     int undo_timeout_ms;
+    int hovered_tab;             /* index of tab under mouse, -1 if none */
     bool dirty;
 };
 

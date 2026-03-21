@@ -154,6 +154,7 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_TAB_UNDO_CLOSE] = "tab-undo-close",
     [BIND_ACTION_CURSOR_LEFT] = "cursor-left",
     [BIND_ACTION_CURSOR_RIGHT] = "cursor-right",
+    [BIND_ACTION_DELETE_PREV_WORD] = "delete-prev-word",
 
     /* Mouse-specific actions */
     [BIND_ACTION_SCROLLBACK_UP_MOUSE] = "scrollback-up-mouse",
@@ -3347,13 +3348,14 @@ add_default_key_bindings(struct config *conf)
         {BIND_ACTION_PROMPT_PREV, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_z}}},
         {BIND_ACTION_PROMPT_NEXT, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_x}}},
         {BIND_ACTION_TAB_NEW, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_t}}},
-        {BIND_ACTION_TAB_CLOSE, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_w}}},
+        {BIND_ACTION_TAB_CLOSE, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_w}}},
         {BIND_ACTION_TAB_NEXT, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Next}}},
         {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Prior}}},
         {BIND_ACTION_TAB_NEXT, m("none"), {{XKB_KEY_Right}}},
         {BIND_ACTION_TAB_PREV, m("none"), {{XKB_KEY_Left}}},
         {BIND_ACTION_CURSOR_RIGHT, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Right}}},
         {BIND_ACTION_CURSOR_LEFT, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Left}}},
+        {BIND_ACTION_DELETE_PREV_WORD, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_BackSpace}}},
         {BIND_ACTION_TAB_UNDO_CLOSE, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_d}}},
     };
 

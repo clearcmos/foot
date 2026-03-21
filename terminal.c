@@ -1486,6 +1486,16 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
 
     term->font_subpixel = get_font_subpixel(term);
 
+    /* Lock in tab bar height/font at default size (before any zoom) */
+    if (existing_window == NULL &&
+        term->window->tab_bar.height == 0 &&
+        term->cell_height > 0)
+    {
+        term->window->tab_bar.height = term->cell_height;
+        if (term->fonts[0] != NULL)
+            term->window->tab_bar.font = fcft_clone(term->fonts[0]);
+    }
+
     term_set_window_title(term, conf->title);
 
     /* Let the Wayland backend know we exist */

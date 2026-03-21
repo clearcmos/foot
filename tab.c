@@ -30,8 +30,11 @@ tab_bar_init(struct tab_bar *tb, int undo_timeout_ms)
         .closed = tll_init(),
         .surface = NULL,
         .chain = NULL,
+        .font = NULL,
+        .height = 0,
         .tab_count = 0,
         .undo_timeout_ms = undo_timeout_ms,
+        .hovered_tab = -1,
         .dirty = true,
     };
 }
@@ -52,6 +55,11 @@ tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm)
         free(it->item.title);
         /* The terminal itself is destroyed separately */
         tll_remove(tb->closed, it);
+    }
+
+    if (tb->font != NULL) {
+        fcft_destroy(tb->font);
+        tb->font = NULL;
     }
 
     if (tb->surface != NULL) {
@@ -112,12 +120,31 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
     /* Copy active_surface from old terminal so pointer state is consistent */
     new_term->active_surface = old_term->active_surface;
 
-    /* Sync dimensions: resize new tab to match current window */
-    if (new_term->width != old_term->width ||
-        new_term->height != old_term->height ||
-        new_term->scale != old_term->scale)
+    /* Sync font state from old tab if zoom changed */
+    if (new_term->cell_width != old_term->cell_width ||
+        new_term->cell_height != old_term->cell_height)
     {
-        new_term->scale = old_term->scale;
+        /* Copy font sizes so reload_fonts produces matching results */
+        for (size_t i = 0; i < 4; i++) {
+            const struct config_font_list *fl = &old_term->conf->fonts[i];
+            for (size_t j = 0; j < fl->count; j++)
+                new_term->font_sizes[i][j] = old_term->font_sizes[i][j];
+
+            fcft_destroy(new_term->fonts[i]);
+            new_term->fonts[i] = old_term->fonts[i] != NULL
+                ? fcft_clone(old_term->fonts[i]) : NULL;
+        }
+        new_term->cell_width = old_term->cell_width;
+        new_term->cell_height = old_term->cell_height;
+        new_term->font_x_ofs = old_term->font_x_ofs;
+        new_term->font_y_ofs = old_term->font_y_ofs;
+        new_term->font_baseline = old_term->font_baseline;
+        new_term->font_line_height = old_term->font_line_height;
+    }
+
+    /* Sync dimensions: resize new tab to match current window */
+    new_term->scale = old_term->scale;
+    {
         int logical_width = (int)roundf(old_term->width / old_term->scale);
         int logical_height = (int)roundf(old_term->height / old_term->scale);
         render_resize(new_term, logical_width, logical_height, RESIZE_FORCE);
@@ -252,33 +279,27 @@ tab_close_active(struct terminal *term)
     struct tab *closing = tb->active;
     struct terminal *closing_term = closing->term;
 
-    /* Find next tab to switch to */
-    bool found_active = false;
+    /* Find previous tab (left) to switch to, fall back to next (right) */
+    struct tab *prev_tab = NULL;
     struct tab *next_tab = NULL;
-
+    bool found = false;
     tll_foreach(tb->tabs, it) {
         if (&it->item == closing) {
-            found_active = true;
+            found = true;
             continue;
         }
-        if (found_active && next_tab == NULL) {
+        if (!found) {
+            prev_tab = &it->item;
+        } else if (next_tab == NULL) {
             next_tab = &it->item;
         }
     }
-    /* If no next tab (was last), use first tab */
-    if (next_tab == NULL) {
-        tll_foreach(tb->tabs, it) {
-            if (&it->item != closing) {
-                next_tab = &it->item;
-                break;
-            }
-        }
-    }
 
-    xassert(next_tab != NULL);
+    struct tab *target = prev_tab != NULL ? prev_tab : next_tab;
+    xassert(target != NULL);
 
     /* Switch first */
-    do_tab_switch(win, next_tab);
+    do_tab_switch(win, target);
 
     /* Move to closed list for undo */
     if (tb->undo_timeout_ms > 0) {
@@ -321,6 +342,20 @@ tab_close_active(struct terminal *term)
 
     tb->tab_count--;
     tb->dirty = true;
+
+    /* Hide tab bar when down to 1 tab */
+    if (tb->tab_count <= 1 && tb->surface != NULL) {
+        wl_surface_attach(tb->surface->surface.surf, NULL, 0, 0);
+        wl_surface_commit(tb->surface->surface.surf);
+
+        /* Re-render grid to reclaim tab bar space */
+        struct terminal *active = tb->active->term;
+        int logical_width = (int)roundf(active->width / active->scale);
+        int logical_height = (int)roundf(active->height / active->scale);
+        render_resize(active, logical_width, logical_height, RESIZE_FORCE);
+        term_damage_all(active);
+        render_refresh(active);
+    }
 
     LOG_INFO("tab closed (remaining: %d)", tb->tab_count);
     return true;
@@ -474,6 +509,5 @@ tab_bar_height(const struct terminal *term)
     if (term->window->tab_bar.tab_count <= 1)
         return 0;
 
-    /* Use cell height as tab bar height */
-    return term->cell_height;
+    return term->window->tab_bar.height;
 }

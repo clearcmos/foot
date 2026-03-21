@@ -2575,12 +2575,13 @@ render_tab_bar(struct terminal *term)
     int x = 0;
     int idx = 0;
 
-    struct fcft_font *font = term->fonts[0];
+    struct fcft_font *font = tb->font != NULL ? tb->font : term->fonts[0];
     if (font == NULL)
         goto commit;
 
     tll_foreach(tb->tabs, it) {
         bool is_active = (&it->item == tb->active);
+        bool is_hovered = (idx == tb->hovered_tab && !is_active);
 
         /* Tab background */
         uint32_t tab_bg = is_active
@@ -2594,6 +2595,13 @@ render_tab_bar(struct terminal *term)
             pixman_color_t active_bg = color_hex_to_pixman_with_alpha(tab_bg, 0xffff, gamma_correct);
             pixman_image_fill_rectangles(
                 PIXMAN_OP_SRC, buf->pix[0], &active_bg, 1,
+                &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
+        } else if (is_hovered) {
+            /* Subtle hover overlay */
+            pixman_color_t hover_bg = color_hex_to_pixman_with_alpha(
+                0xff000000 | term->colors.fg, 0x3000, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_OVER, buf->pix[0], &hover_bg, 1,
                 &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
         }
 
@@ -4793,10 +4801,11 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
     int old_rows = term->rows;
 
     /* Screen rows/cols after resize */
+    const int tb_h = tab_bar_height(term);
     const int new_cols =
         (term->width - (pad_left + pad_right)) / term->cell_width;
     const int new_rows =
-        (term->height - (pad_top + pad_bottom)) / term->cell_height;
+        (term->height - (pad_top + pad_bottom) - tb_h) / term->cell_height;
 
     /*
      * Requirements for scrollback:
@@ -4855,9 +4864,12 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
     term->margins.right = total_x_pad - term->margins.left;
     term->margins.bottom = total_y_pad - term->margins.top;
 
+    /* Offset grid below tab bar */
+    term->margins.top += tb_h;
+
     xassert(term->margins.left >= pad_left);
     xassert(term->margins.right >= pad_right);
-    xassert(term->margins.top >= pad_top);
+    xassert(term->margins.top >= (pad_top + tb_h));
     xassert(term->margins.bottom >= pad_bottom);
 
     if (new_cols == old_cols && new_rows == old_rows) {

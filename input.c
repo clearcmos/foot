@@ -197,18 +197,15 @@ execute_binding(struct seat *seat, struct terminal *term,
         return true;
 
     case BIND_ACTION_FONT_SIZE_UP:
-        tll_foreach(term->window->tab_bar.tabs, it)
-            term_font_size_increase(it->item.term);
+        term_font_size_increase(term);
         return true;
 
     case BIND_ACTION_FONT_SIZE_DOWN:
-        tll_foreach(term->window->tab_bar.tabs, it)
-            term_font_size_decrease(it->item.term);
+        term_font_size_decrease(term);
         return true;
 
     case BIND_ACTION_FONT_SIZE_RESET:
-        tll_foreach(term->window->tab_bar.tabs, it)
-            term_font_size_reset(it->item.term);
+        term_font_size_reset(term);
         return true;
 
     case BIND_ACTION_SPAWN_TERMINAL:
@@ -254,6 +251,10 @@ execute_binding(struct seat *seat, struct terminal *term,
             term_to_slave(term, "\x1bOC", 3);
         else
             term_to_slave(term, "\x1b[C", 3);
+        return true;
+
+    case BIND_ACTION_DELETE_PREV_WORD:
+        term_to_slave(term, "\x17", 1);  /* Ctrl+W = 0x17 */
         return true;
 
     case BIND_ACTION_MINIMIZE:
@@ -2520,6 +2521,15 @@ wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
     seat->mouse_focus = term;
     term->active_surface = term_surface_kind(term, surface);
 
+    /* Reset tab hover when pointer moves to a different surface */
+    if (term->active_surface != TERM_SURF_TAB_BAR &&
+        win->tab_bar.hovered_tab >= 0)
+    {
+        win->tab_bar.hovered_tab = -1;
+        win->tab_bar.dirty = true;
+        render_refresh(term);
+    }
+
     if (touch_is_active(seat))
         return;
 
@@ -2758,8 +2768,23 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 
     switch (surf_kind) {
     case TERM_SURF_NONE:
-    case TERM_SURF_TAB_BAR:
         break;
+
+    case TERM_SURF_TAB_BAR: {
+        struct tab_bar *tb = &term->window->tab_bar;
+        if (tb->tab_count > 1) {
+            int tab_width = term->width / tb->tab_count;
+            int hovered = seat->mouse.x / tab_width;
+            if (hovered < 0) hovered = 0;
+            if (hovered >= tb->tab_count) hovered = tb->tab_count - 1;
+            if (hovered != tb->hovered_tab) {
+                tb->hovered_tab = hovered;
+                tb->dirty = true;
+                render_refresh(term);
+            }
+        }
+        break;
+    }
 
     case TERM_SURF_BUTTON_MINIMIZE:
         if (pointer_is_on_button(term, seat, CSD_SURF_MINIMIZE) != is_on_button)
@@ -3297,8 +3322,9 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
             struct tab_bar *tb = &win->tab_bar;
             if (tb->tab_count > 1) {
                 int tab_width = term->width / tb->tab_count;
-                int click_x = (int)(seat->mouse.x * term->scale);
-                int clicked_tab = click_x / tab_width;
+                int clicked_tab = seat->mouse.x / tab_width;
+                if (clicked_tab < 0)
+                    clicked_tab = 0;
                 if (clicked_tab >= tb->tab_count)
                     clicked_tab = tb->tab_count - 1;
                 tab_switch_to(win, clicked_tab);
