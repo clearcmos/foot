@@ -1452,23 +1452,25 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     term->scale = tll_front(term->wl->monitors).scale;
 
     if (existing_window != NULL) {
-        /* Reuse existing window (new tab) */
+        /* Reuse existing window (new tab) - share parent's font state */
         struct terminal *parent = existing_window->term;
         term->window = existing_window;
         term->scale = parent->scale;
+        term->font_dpi = parent->font_dpi;
         term->font_subpixel = parent->font_subpixel;
-
-        /* Load fonts - font_dpi is 0 so term_font_dpi_changed will
-         * detect a change and trigger reload_fonts */
-        if (!term_font_dpi_changed(term, 0.))
-            goto err;
-
-        /* Force cell dimensions to match parent exactly */
+        term->font_is_sized_by_dpi = parent->font_is_sized_by_dpi;
         term->cell_width = parent->cell_width;
         term->cell_height = parent->cell_height;
         term->font_x_ofs = parent->font_x_ofs;
         term->font_y_ofs = parent->font_y_ofs;
         term->font_baseline = parent->font_baseline;
+        term->font_line_height = parent->font_line_height;
+
+        /* Share font objects by cloning (fcft fonts are ref-counted) */
+        for (size_t i = 0; i < 4; i++) {
+            if (parent->fonts[i] != NULL)
+                term->fonts[i] = fcft_clone(parent->fonts[i]);
+        }
     } else {
         /* Initialize the Wayland window backend */
         if ((term->window = wayl_win_init(term, token)) == NULL)

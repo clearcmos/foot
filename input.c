@@ -197,15 +197,18 @@ execute_binding(struct seat *seat, struct terminal *term,
         return true;
 
     case BIND_ACTION_FONT_SIZE_UP:
-        term_font_size_increase(term);
+        tll_foreach(term->window->tab_bar.tabs, it)
+            term_font_size_increase(it->item.term);
         return true;
 
     case BIND_ACTION_FONT_SIZE_DOWN:
-        term_font_size_decrease(term);
+        tll_foreach(term->window->tab_bar.tabs, it)
+            term_font_size_decrease(it->item.term);
         return true;
 
     case BIND_ACTION_FONT_SIZE_RESET:
-        term_font_size_reset(term);
+        tll_foreach(term->window->tab_bar.tabs, it)
+            term_font_size_reset(it->item.term);
         return true;
 
     case BIND_ACTION_SPAWN_TERMINAL:
