@@ -1,6 +1,6 @@
 pkgname=foot-custom
 pkgdesc='A fast, lightweight and minimalistic Wayland terminal emulator (fork with tabs)'
-pkgver=1.26.1.r0.05c6b5e7
+pkgver=1.26.1.r0.256f2244
 pkgrel=1
 arch=('x86_64')
 url='https://github.com/clearcmos/foot'
@@ -33,5 +33,7 @@ build() {
 
 package() {
     meson install -C build --destdir "$pkgdir"
+    # Remove terminfo files that conflict with ncurses
+    rm -rf "$pkgdir/usr/share/terminfo"
     install -Dm0644 -t "$pkgdir/usr/share/licenses/$pkgname/" "$pkgname/LICENSE"
 }
