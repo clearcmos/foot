@@ -68,6 +68,17 @@ The fast, lightweight and minimalistic Wayland terminal emulator.
   ![tux-with-foot](doc/sixel-tux-foot.png "Sixel screenshot")
 
 
+## Fork additions
+
+This fork adds multi-tab support:
+
+* Ctrl+T to open a new tab, Ctrl+W to close
+* Ctrl+Tab / Ctrl+Shift+Tab to cycle tabs (also Ctrl+PageDown/PageUp)
+* Ctrl+Shift+D to restore a closed tab
+* Tab bar with dynamic-width tabs showing the current path (~/...)
+* Tabs inherit the current zoom level
+* Mouse hover and click on tabs to switch
+
 # Installing
 
 See [INSTALL.md](INSTALL.md).
