@@ -2639,7 +2639,6 @@ render_tab_bar(struct terminal *term)
         &(pixman_rectangle16_t){0, 0, buf_width, buf_height});
 
     /* Render each tab label */
-    const int tab_width = buf_width / tb->tab_count;
     int x = 0;
     int idx = 0;
 
@@ -2647,9 +2646,51 @@ render_tab_bar(struct terminal *term)
     if (font == NULL)
         goto commit;
 
+    const int text_margin = font->max_advance.x / 2;
+
+    /* Measure each tab's text width to compute dynamic tab widths */
+    int *tab_widths = xmalloc(tb->tab_count * sizeof(tab_widths[0]));
+    int total_text_width = 0;
+    {
+        int i = 0;
+        tll_foreach(tb->tabs, it) {
+            const char *title = it->item.title != NULL ? it->item.title : "shell";
+            char32_t *title32 = ambstoc32(title);
+            int w = 0;
+            if (title32 != NULL) {
+                for (const char32_t *c = title32; *c != 0; c++) {
+                    const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(
+                        font, *c, term->font_subpixel);
+                    if (glyph != NULL)
+                        w += glyph->advance.x;
+                }
+                free(title32);
+            }
+            tab_widths[i] = w + 2 * text_margin;
+            total_text_width += tab_widths[i];
+            i++;
+        }
+
+        /* Cap total to buf_width: scale down proportionally if needed */
+        if (total_text_width > buf_width) {
+            for (int j = 0; j < tb->tab_count; j++)
+                tab_widths[j] = tab_widths[j] * buf_width / total_text_width;
+        }
+
+        /* Store cumulative x positions for mouse hit-testing */
+        free(tb->tab_x_ends);
+        tb->tab_x_ends = xmalloc(tb->tab_count * sizeof(tb->tab_x_ends[0]));
+        int cum_x = 0;
+        for (int j = 0; j < tb->tab_count; j++) {
+            cum_x += tab_widths[j];
+            tb->tab_x_ends[j] = cum_x;
+        }
+    }
+
     tll_foreach(tb->tabs, it) {
         bool is_active = (&it->item == tb->active);
         bool is_hovered = (idx == tb->hovered_tab && !is_active);
+        const int tab_width = tab_widths[idx];
 
         /* Tab background */
         uint32_t tab_bg = is_active
@@ -2680,7 +2721,6 @@ render_tab_bar(struct terminal *term)
             pixman_color_t fg = color_hex_to_pixman(tab_fg, gamma_correct);
             pixman_image_t *src = pixman_image_create_solid_fill(&fg);
 
-            const int text_margin = font->max_advance.x / 2;
             int text_x = x + text_margin;
             const int max_text_x = x + tab_width - text_margin;
 
@@ -2731,6 +2771,8 @@ render_tab_bar(struct terminal *term)
         x += tab_width;
         idx++;
     }
+
+    free(tab_widths);
 
 commit:
     /* Position below CSD title (or at top) */

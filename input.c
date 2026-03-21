@@ -2787,11 +2787,14 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 
     case TERM_SURF_TAB_BAR: {
         struct tab_bar *tb = &term->window->tab_bar;
-        if (tb->tab_count > 1) {
-            int tab_width = term->width / tb->tab_count;
-            int hovered = seat->mouse.x / tab_width;
-            if (hovered < 0) hovered = 0;
-            if (hovered >= tb->tab_count) hovered = tb->tab_count - 1;
+        if (tb->tab_count > 1 && tb->tab_x_ends != NULL) {
+            int hovered = tb->tab_count - 1;
+            for (int i = 0; i < tb->tab_count; i++) {
+                if (seat->mouse.x < tb->tab_x_ends[i]) {
+                    hovered = i;
+                    break;
+                }
+            }
             if (hovered != tb->hovered_tab) {
                 tb->hovered_tab = hovered;
                 tb->dirty = true;
@@ -3335,13 +3338,14 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
         if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_RELEASED) {
             struct wl_window *win = term->window;
             struct tab_bar *tb = &win->tab_bar;
-            if (tb->tab_count > 1) {
-                int tab_width = term->width / tb->tab_count;
-                int clicked_tab = seat->mouse.x / tab_width;
-                if (clicked_tab < 0)
-                    clicked_tab = 0;
-                if (clicked_tab >= tb->tab_count)
-                    clicked_tab = tb->tab_count - 1;
+            if (tb->tab_count > 1 && tb->tab_x_ends != NULL) {
+                int clicked_tab = tb->tab_count - 1;
+                for (int i = 0; i < tb->tab_count; i++) {
+                    if (seat->mouse.x < tb->tab_x_ends[i]) {
+                        clicked_tab = i;
+                        break;
+                    }
+                }
                 tab_switch_to(win, clicked_tab);
             }
         }

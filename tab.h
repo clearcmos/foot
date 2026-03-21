@@ -41,6 +41,7 @@ struct tab_bar {
     int tab_count;
     int undo_timeout_ms;
     int hovered_tab;             /* index of tab under mouse, -1 if none */
+    int *tab_x_ends;             /* cumulative x end positions for hit-testing */
     bool dirty;
 };
 

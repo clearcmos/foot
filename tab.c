@@ -39,6 +39,7 @@ tab_bar_init(struct tab_bar *tb, int undo_timeout_ms)
         .tab_count = 0,
         .undo_timeout_ms = undo_timeout_ms,
         .hovered_tab = -1,
+        .tab_x_ends = NULL,
         .dirty = true,
     };
 }
@@ -78,6 +79,8 @@ tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm)
         tb->chain = NULL;
     }
 
+    free(tb->tab_x_ends);
+    tb->tab_x_ends = NULL;
     tb->active = NULL;
     tb->tab_count = 0;
 }
@@ -534,7 +537,22 @@ tab_update_title(struct wl_window *win, struct terminal *term,
         return;
 
     free(tab->title);
-    tab->title = xstrdup(title);
+
+    /* Extract path from "user@host:path" format and collapse $HOME to ~ */
+    const char *colon = strchr(title, ':');
+    const char *path = colon != NULL ? colon + 1 : title;
+
+    const char *home = getenv("HOME");
+    if (home != NULL && strncmp(path, home, strlen(home)) == 0) {
+        const char *rest = path + strlen(home);
+        if (*rest == '\0')
+            tab->title = xstrdup("~");
+        else
+            tab->title = xasprintf("~%s", rest);
+    } else {
+        tab->title = xstrdup(path);
+    }
+
     win->tab_bar.dirty = true;
 }
 
