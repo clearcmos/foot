@@ -22,6 +22,9 @@ struct closed_tab {
     struct terminal *term;
     char *title;
     int timer_fd;
+    char *scrollback;
+    size_t scrollback_len;
+    char *cwd;
 };
 
 typedef tll(struct tab) tab_list_t;

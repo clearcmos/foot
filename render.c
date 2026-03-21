@@ -2619,7 +2619,7 @@ render_tab_bar(struct terminal *term)
     const float scale = term->scale;
     const int bar_height = tab_bar_height(term);
     const int buf_width = term->width;
-    const int buf_height = (int)roundf(bar_height * scale);
+    const int buf_height = bar_height;
 
     if (buf_width <= 0 || buf_height <= 0)
         return;
@@ -4717,9 +4717,10 @@ set_size_from_grid(struct terminal *term, int *width, int *height, int cols, int
     new_width = cols * term->cell_width;
     new_height = rows * term->cell_height;
 
-    /* Include any configured padding */
+    /* Include any configured padding and tab bar */
     new_width  += (term->conf->pad_left + term->conf->pad_right) * term->scale;
     new_height += (term->conf->pad_top + term->conf->pad_bottom) * term->scale;
+    new_height += tab_bar_height(term);
 
     /* Round to multiples of scale */
     new_width = round(term->scale * round(new_width / term->scale));

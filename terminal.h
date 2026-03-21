@@ -856,6 +856,11 @@ struct terminal *term_init(
     struct wl_window *existing_window);
 
 bool term_shutdown(struct terminal *term);
+
+/* Exposed for tab restore */
+bool fdm_ptmx(struct fdm *fdm, int fd, int events, void *data);
+void fdm_client_terminated(
+    struct reaper *reaper, pid_t pid, int status, void *data);
 int term_destroy(struct terminal *term);
 
 void term_update_ascii_printer(struct terminal *term);

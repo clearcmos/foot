@@ -1163,7 +1163,7 @@ load_fonts_from_conf(struct terminal *term)
     return reload_fonts(term, true);
 }
 
-static void fdm_client_terminated(
+void fdm_client_terminated(
     struct reaper *reaper, pid_t pid, int status, void *data);
 
 static const int PTY_OPEN_FLAGS = O_RDWR | O_NOCTTY;
@@ -1642,7 +1642,7 @@ shutdown_maybe_done(struct terminal *term)
         cb(cb_data, exit_code);
 }
 
-static void
+void
 fdm_client_terminated(struct reaper *reaper, pid_t pid, int status, void *data)
 {
     struct terminal *term = data;
