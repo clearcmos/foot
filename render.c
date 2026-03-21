@@ -4925,7 +4925,7 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
 
     if (centered_padding && !term->window->is_resizing) {
         term->margins.left = total_x_pad / 2;
-        term->margins.top = total_y_pad / 2;
+        term->margins.top = pad_top;
     } else {
         term->margins.left = pad_left;
         term->margins.top = pad_top;

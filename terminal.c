@@ -1468,10 +1468,14 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         term->font_baseline = parent->font_baseline;
         term->font_line_height = parent->font_line_height;
 
-        /* Share font objects by cloning (fcft fonts are ref-counted) */
+        /* Share font objects and sizes by cloning */
         for (size_t i = 0; i < 4; i++) {
             if (parent->fonts[i] != NULL)
                 term->fonts[i] = fcft_clone(parent->fonts[i]);
+
+            const struct config_font_list *fl = &conf->fonts[i];
+            for (size_t j = 0; j < fl->count; j++)
+                term->font_sizes[i][j] = parent->font_sizes[i][j];
         }
     } else {
         /* Initialize the Wayland window backend */
