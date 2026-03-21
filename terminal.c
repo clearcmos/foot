@@ -1453,8 +1453,22 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
 
     if (existing_window != NULL) {
         /* Reuse existing window (new tab) */
+        struct terminal *parent = existing_window->term;
         term->window = existing_window;
-        term->scale = existing_window->term->scale;
+        term->scale = parent->scale;
+        term->font_subpixel = parent->font_subpixel;
+
+        /* Load fonts - font_dpi is 0 so term_font_dpi_changed will
+         * detect a change and trigger reload_fonts */
+        if (!term_font_dpi_changed(term, 0.))
+            goto err;
+
+        /* Force cell dimensions to match parent exactly */
+        term->cell_width = parent->cell_width;
+        term->cell_height = parent->cell_height;
+        term->font_x_ofs = parent->font_x_ofs;
+        term->font_y_ofs = parent->font_y_ofs;
+        term->font_baseline = parent->font_baseline;
     } else {
         /* Initialize the Wayland window backend */
         if ((term->window = wayl_win_init(term, token)) == NULL)
@@ -1462,11 +1476,11 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
 
         /* Register as the first tab */
         tab_bar_add_initial(&term->window->tab_bar, term);
-    }
 
-    /* Load fonts */
-    if (!term_font_dpi_changed(term, 0.))
-        goto err;
+        /* Load fonts */
+        if (!term_font_dpi_changed(term, 0.))
+            goto err;
+    }
 
     term->font_subpixel = get_font_subpixel(term);
 
@@ -1850,10 +1864,24 @@ term_destroy(struct terminal *term)
         fdm_del(term->fdm, term->shutdown.terminate_timeout_fd);
 
     if (term->window != NULL) {
-        /* Only destroy the window if this is the last tab */
-        if (tab_count(term->window) <= 1) {
-            tab_bar_destroy(&term->window->tab_bar, term->fdm);
-            wayl_win_destroy(term->window);
+        struct wl_window *win = term->window;
+        int ntabs = tab_count(win);
+
+        if (ntabs <= 1) {
+            /* Last tab - destroy the window */
+            tab_bar_destroy(&win->tab_bar, term->fdm);
+            wayl_win_destroy(win);
+        } else {
+            /* Shut down all other tabs first */
+            tll_foreach(win->tab_bar.tabs, it) {
+                if (it->item.term != term && it->item.term != NULL) {
+                    struct terminal *sibling = it->item.term;
+                    sibling->window = NULL;  /* Prevent recursive window destroy */
+                    term_shutdown(sibling);
+                }
+            }
+            tab_bar_destroy(&win->tab_bar, term->fdm);
+            wayl_win_destroy(win);
         }
         term->window = NULL;
     }

@@ -5270,6 +5270,17 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
         if (unlikely(term->shutdown.in_progress || !term->window->is_configured))
             continue;
 
+        /* Skip rendering for inactive tabs - only active tab renders to the window */
+        if (term->window->tab_bar.active != NULL &&
+            term->window->tab_bar.active->term != term)
+        {
+            term->render.refresh.grid = false;
+            term->render.refresh.csd = false;
+            term->render.refresh.search = false;
+            term->render.refresh.urls = false;
+            continue;
+        }
+
         bool grid = term->render.refresh.grid;
         bool csd = term->render.refresh.csd;
         bool search = term->is_searching && term->render.refresh.search;

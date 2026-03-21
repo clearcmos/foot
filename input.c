@@ -224,15 +224,33 @@ execute_binding(struct seat *seat, struct terminal *term,
         return true;
 
     case BIND_ACTION_TAB_NEXT:
+        if (tab_count(term->window) <= 1)
+            return false;  /* Pass through to terminal */
         tab_next(term);
         return true;
 
     case BIND_ACTION_TAB_PREV:
+        if (tab_count(term->window) <= 1)
+            return false;  /* Pass through to terminal */
         tab_prev(term);
         return true;
 
     case BIND_ACTION_TAB_UNDO_CLOSE:
         tab_undo_close(term);
+        return true;
+
+    case BIND_ACTION_CURSOR_LEFT:
+        if (term->cursor_keys_mode == CURSOR_KEYS_APPLICATION)
+            term_to_slave(term, "\x1bOD", 3);
+        else
+            term_to_slave(term, "\x1b[D", 3);
+        return true;
+
+    case BIND_ACTION_CURSOR_RIGHT:
+        if (term->cursor_keys_mode == CURSOR_KEYS_APPLICATION)
+            term_to_slave(term, "\x1bOC", 3);
+        else
+            term_to_slave(term, "\x1b[C", 3);
         return true;
 
     case BIND_ACTION_MINIMIZE:
@@ -2543,7 +2561,7 @@ wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
         break;
 
     case TERM_SURF_NONE:
-        BUG("Invalid surface type");
+        LOG_WARN("cursor update on TERM_SURF_NONE");
         break;
     }
 }
@@ -3337,7 +3355,7 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
     }
 
     case TERM_SURF_NONE:
-        BUG("Invalid surface type");
+        LOG_WARN("pointer button on TERM_SURF_NONE (tab switch race?)");
         break;
 
     }

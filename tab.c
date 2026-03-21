@@ -109,6 +109,20 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
     win->tab_bar.active = new_tab;
     win->term = new_term;
 
+    /* Copy active_surface from old terminal so pointer state is consistent */
+    new_term->active_surface = old_term->active_surface;
+
+    /* Sync dimensions: resize new tab to match current window */
+    if (new_term->width != old_term->width ||
+        new_term->height != old_term->height ||
+        new_term->scale != old_term->scale)
+    {
+        new_term->scale = old_term->scale;
+        int logical_width = (int)roundf(old_term->width / old_term->scale);
+        int logical_height = (int)roundf(old_term->height / old_term->scale);
+        render_resize(new_term, logical_width, logical_height, RESIZE_FORCE);
+    }
+
     /* Update seat focus to point to new terminal */
     tll_foreach(new_term->wl->seats, it) {
         if (it->item.kbd_focus == old_term)
