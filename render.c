@@ -4862,7 +4862,7 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
 
     /* Minimum window size (must be divisible by the scaling factor)*/
     const int min_width = roundf(scale * ceilf((min_cols * term->cell_width) / scale));
-    const int min_height = roundf(scale * ceilf((min_rows * term->cell_height) / scale));
+    const int min_height = roundf(scale * ceilf((min_rows * term->cell_height + tab_bar_height(term)) / scale));
 
     width = max(width, min_width);
     height = max(height, min_height);
@@ -4906,6 +4906,10 @@ render_resize(struct terminal *term, int width, int height, uint8_t opts)
     LOG_DBG("resized: size=%dx%d (scale=%.2f)", width, height, term->scale);
     term->width = width;
     term->height = height;
+
+    /* Tab bar needs re-rendering when window width changes */
+    if (term->window->tab_bar.tab_count > 1)
+        term->window->tab_bar.dirty = true;
 
     /* Screen rows/cols before resize */
     int old_cols = term->cols;
