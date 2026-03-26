@@ -216,12 +216,17 @@ execute_binding(struct seat *seat, struct terminal *term,
         tab_new(term);
         return true;
 
-    case BIND_ACTION_TAB_CLOSE:
+    case BIND_ACTION_TAB_CLOSE: {
+        pid_t fg_pgid = tcgetpgrp(term->ptmx);
+        pid_t shell_pgid = getpgid(term->slave);
+        if (fg_pgid != -1 && shell_pgid != -1 && fg_pgid != shell_pgid)
+            return false;  /* Child process running - pass through */
         if (!tab_close_active(term)) {
             /* Last tab - close window */
             term_shutdown(term);
         }
         return true;
+    }
 
     case BIND_ACTION_TAB_NEXT:
         if (tab_count(term->window) <= 1)
