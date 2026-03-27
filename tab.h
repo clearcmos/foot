@@ -79,5 +79,8 @@ int tab_index_of(const struct wl_window *win, const struct terminal *term);
 /* Get the number of tabs. */
 int tab_count(const struct wl_window *win);
 
+/* Refresh all tab titles from /proc/<pid>/cwd. */
+void tab_bar_refresh_titles(struct wl_window *win, struct terminal *term);
+
 /* Get the tab bar height in pixels (0 if hidden). */
 int tab_bar_height(const struct terminal *term);

@@ -1,7 +1,9 @@
 #include "tab.h"
 
 #include <fcntl.h>
+#include <limits.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -85,13 +87,44 @@ tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm)
     tb->tab_count = 0;
 }
 
+static char *
+title_from_cwd(struct terminal *term)
+{
+    /* Read the shell's actual cwd from /proc */
+    char proc_path[64];
+    char cwd_buf[PATH_MAX];
+    const char *path = NULL;
+
+    if (term->slave > 0) {
+        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
+        ssize_t len = readlink(proc_path, cwd_buf, sizeof(cwd_buf) - 1);
+        if (len > 0) {
+            cwd_buf[len] = '\0';
+            path = cwd_buf;
+        }
+    }
+
+    if (path == NULL)
+        path = term->cwd;
+    if (path == NULL)
+        return xstrdup("shell");
+
+    const char *home = getenv("HOME");
+    if (home != NULL && strncmp(path, home, strlen(home)) == 0) {
+        const char *rest = path + strlen(home);
+        if (*rest == '\0')
+            return xstrdup("~");
+        return xasprintf("~%s", rest);
+    }
+    return xstrdup(path);
+}
+
 void
 tab_bar_add_initial(struct tab_bar *tb, struct terminal *term)
 {
-    const char *title = term->window_title != NULL ? term->window_title : "";
     tll_push_back(tb->tabs, ((struct tab){
         .term = term,
-        .title = xstrdup(title),
+        .title = title_from_cwd(term),
         .urgent = false,
     }));
     tb->active = &tll_back(tb->tabs);
@@ -207,11 +240,9 @@ tab_new(struct terminal *term)
     }
 
     /* Add to tab list */
-    const char *title = new_term->window_title != NULL
-        ? new_term->window_title : "shell";
     tll_push_back(win->tab_bar.tabs, ((struct tab){
         .term = new_term,
-        .title = xstrdup(title),
+        .title = title_from_cwd(new_term),
         .urgent = false,
     }));
     win->tab_bar.tab_count++;
@@ -541,24 +572,35 @@ tab_update_title(struct wl_window *win, struct terminal *term,
     if (tab == NULL)
         return;
 
-    free(tab->title);
+    char *new_title = title_from_cwd(term);
 
-    /* Extract path from "user@host:path" format and collapse $HOME to ~ */
-    const char *colon = strchr(title, ':');
-    const char *path = colon != NULL ? colon + 1 : title;
-
-    const char *home = getenv("HOME");
-    if (home != NULL && strncmp(path, home, strlen(home)) == 0) {
-        const char *rest = path + strlen(home);
-        if (*rest == '\0')
-            tab->title = xstrdup("~");
-        else
-            tab->title = xasprintf("~%s", rest);
-    } else {
-        tab->title = xstrdup(path);
+    /* Only mark dirty if the title actually changed */
+    if (tab->title != NULL && strcmp(tab->title, new_title) == 0) {
+        free(new_title);
+        return;
     }
 
+    free(tab->title);
+    tab->title = new_title;
     win->tab_bar.dirty = true;
+    render_refresh(term);
+}
+
+void
+tab_bar_refresh_titles(struct wl_window *win, struct terminal *term)
+{
+    struct tab_bar *tb = &win->tab_bar;
+
+    tll_foreach(tb->tabs, it) {
+        char *new_title = title_from_cwd(it->item.term);
+        if (it->item.title == NULL || strcmp(it->item.title, new_title) != 0) {
+            free(it->item.title);
+            it->item.title = new_title;
+            tb->dirty = true;
+        } else {
+            free(new_title);
+        }
+    }
 }
 
 int

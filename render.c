@@ -2648,33 +2648,14 @@ render_tab_bar(struct terminal *term)
 
     const int text_margin = font->max_advance.x / 2;
 
-    /* Measure each tab's text width to compute dynamic tab widths */
+    /* Equal-width tabs filling the entire bar */
     int *tab_widths = xmalloc(tb->tab_count * sizeof(tab_widths[0]));
-    int total_text_width = 0;
     {
-        int i = 0;
-        tll_foreach(tb->tabs, it) {
-            const char *title = it->item.title != NULL ? it->item.title : "shell";
-            char32_t *title32 = ambstoc32(title);
-            int w = 0;
-            if (title32 != NULL) {
-                for (const char32_t *c = title32; *c != 0; c++) {
-                    const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(
-                        font, *c, term->font_subpixel);
-                    if (glyph != NULL)
-                        w += glyph->advance.x;
-                }
-                free(title32);
-            }
-            tab_widths[i] = w + 2 * text_margin;
-            total_text_width += tab_widths[i];
-            i++;
-        }
+        const int base_width = buf_width / tb->tab_count;
+        int remainder = buf_width % tb->tab_count;
 
-        /* Cap total to buf_width: scale down proportionally if needed */
-        if (total_text_width > buf_width) {
-            for (int j = 0; j < tb->tab_count; j++)
-                tab_widths[j] = tab_widths[j] * buf_width / total_text_width;
+        for (int j = 0; j < tb->tab_count; j++) {
+            tab_widths[j] = base_width + (j < remainder ? 1 : 0);
         }
 
         /* Store cumulative x positions for mouse hit-testing */
@@ -2759,13 +2740,21 @@ render_tab_bar(struct terminal *term)
             free(title32);
         }
 
-        /* Separator line */
-        if (idx < tb->tab_count - 1) {
-            uint32_t sep_color = 0xff000000 | term->colors.fg;
-            pixman_color_t sep = color_hex_to_pixman_with_alpha(sep_color, 0x4000, gamma_correct);
-            pixman_image_fill_rectangles(
-                PIXMAN_OP_OVER, buf->pix[0], &sep, 1,
-                &(pixman_rectangle16_t){x + tab_width - 1, 2, 1, buf_height - 4});
+        /* Tab border (all four sides) */
+        {
+            const int bw = 1;
+            if (bw < tab_width && bw < buf_height) {
+                uint32_t bdr_color = 0xff000000 | term->colors.fg;
+                pixman_color_t bdr = color_hex_to_pixman_with_alpha(bdr_color, 0x4000, gamma_correct);
+                pixman_rectangle16_t sides[] = {
+                    {x, 0, bw, buf_height},                          /* left */
+                    {x + tab_width - bw, 0, bw, buf_height},         /* right */
+                    {x, 0, tab_width, bw},                           /* top */
+                    {x, buf_height - bw, tab_width, bw},             /* bottom */
+                };
+                pixman_image_fill_rectangles(
+                    PIXMAN_OP_OVER, buf->pix[0], &bdr, 4, sides);
+            }
         }
 
         x += tab_width;
@@ -5412,8 +5401,9 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
         bool csd = term->render.refresh.csd;
         bool search = term->is_searching && term->render.refresh.search;
         bool urls = urls_mode_is_active(term) && term->render.refresh.urls;
+        bool tab_bar = term->window->tab_bar.dirty;
 
-        if (!(grid | csd | search | urls))
+        if (!(grid | csd | search | urls | tab_bar))
             continue;
 
         if (term->render.app_sync_updates.enabled && !(csd | search | urls))
@@ -5436,8 +5426,11 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
                 render_csd(term);
                 quirk_weston_csd_off(term);
             }
-            if (term->window->tab_bar.dirty)
-                render_tab_bar(term);
+            if (term->window->tab_bar.tab_count > 1) {
+                tab_bar_refresh_titles(term->window, term);
+                if (term->window->tab_bar.dirty)
+                    render_tab_bar(term);
+            }
             if (search)
                 render_search_box(term);
             if (urls)

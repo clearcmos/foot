@@ -19,6 +19,7 @@
 #include "uri.h"
 #include "util.h"
 #include "xmalloc.h"
+#include "tab.h"
 #include "xsnprintf.h"
 
 #define UNHANDLED() LOG_DBG("unhandled: OSC: %.*s", (int)term->vt.osc.idx, term->vt.osc.data)
@@ -468,6 +469,10 @@ osc_set_pwd(struct terminal *term, char *string)
         LOG_DBG("OSC7: pwd: %s", path);
         free(term->cwd);
         term->cwd = path;
+
+        /* Update tab title to reflect new cwd */
+        if (term->window != NULL)
+            tab_update_title(term->window, term, path);
     } else
         free(path);
 

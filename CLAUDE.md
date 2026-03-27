@@ -53,8 +53,9 @@ The build uses meson/ninja. Dependencies (fcft, tllist) are auto-fetched as subp
 Key implementation details:
 - Tab bar renders as a Wayland subsurface positioned at (0,0), drawn in `render_tab_bar()` in `render.c`.
 - `tab_bar_height()` returns physical pixels (`roundf(20 * scale)`). This value must be included in `set_size_from_grid()` and subtracted from available height in `render_resize()` margin calculations.
-- Tab titles are path-only (stripped from `user@host:path`, `$HOME` collapsed to `~`).
-- Tab widths are dynamic, sized to fit each label. Cumulative x positions stored in `tab_bar.tab_x_ends` for mouse hit-testing in `input.c`.
+- Tab titles show the shell's current working directory, read from `/proc/<pid>/cwd` via `title_from_cwd()` in `tab.c`. `$HOME` is collapsed to `~`. Titles refresh on every render cycle via `tab_bar_refresh_titles()`.
+- Tab widths are equal, dividing the full bar width evenly (`buf_width / tab_count`). Remainder pixels go to leftmost tabs. Cumulative x positions stored in `tab_bar.tab_x_ends` for mouse hit-testing in `input.c`.
+- Each tab is enclosed in a 1px border (all four sides) drawn with foreground color at `0x4000` alpha.
 - New tabs inherit the parent's `font_sizes` array so zoom level carries over.
 - `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab.
 - Grid vertical margin is anchored to the top (`pad_top`, not centered) to prevent text jumping during zoom.
