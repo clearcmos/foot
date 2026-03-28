@@ -60,7 +60,22 @@ Key implementation details:
 - `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab.
 - Grid vertical margin is anchored to the top (`pad_top`, not centered) to prevent text jumping during zoom.
 
-Keybindings: Ctrl+T (new), Ctrl+W (close), Ctrl+Tab / Ctrl+Shift+Tab (next/prev), Ctrl+Shift+D (undo close). Also Ctrl+PageDown/PageUp and arrow keys for next/prev.
+Keybindings: Ctrl+T (new), Ctrl+W (close), Ctrl+Tab / Ctrl+Shift+Tab (next/prev), Ctrl+Shift+D (undo close). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode.
+
+## Split pane mode (custom feature, WIP)
+
+Ctrl+E toggles between tabbed and split-pane view. In split mode, all tabs become simultaneously visible panes arranged in a grid layout.
+
+Key implementation details:
+- Each pane is a Wayland subsurface (`tab.pane`) in desync mode, positioned as a child of the main window surface.
+- All terminals render independently via per-pane frame callbacks (`tab.pane_frame_cb`), stored on the `struct tab`.
+- The render loop (`fdm_hook_refresh_pending_terminals`) skips the inactive-tab filter when `split_mode` is true, allowing all terminals to render.
+- `grid_render()` detects split mode and commits to the pane subsurface instead of the window surface. Damage is reported on the pane surface.
+- `do_tab_switch()` does not suppress rendering or resize terminals in split mode, since all panes render independently.
+- Mouse hover over a pane switches focus via `wl_pointer_enter` detecting pane surfaces in `input.c`.
+- Window geometry (`xdg_surface_set_window_geometry`) and configure events are suppressed in split mode to prevent the compositor from resizing panes to full window size.
+- Pane dimensions use the pre-split content area (tab bar space is not reclaimed) to match the window geometry the compositor knows about.
+- Creating a new tab or closing down to 1 tab exits split mode automatically.
 
 ## Build Options
 

@@ -5,6 +5,7 @@
 
 struct terminal;
 struct wl_window;
+struct wl_callback;
 struct fdm;
 struct reaper;
 struct wayland;
@@ -16,6 +17,8 @@ struct tab {
     struct terminal *term;
     char *title;
     bool urgent;
+    struct wayl_sub_surface *pane;      /* split mode pane surface, NULL in tab mode */
+    struct wl_callback *pane_frame_cb;  /* per-pane frame callback in split mode */
 };
 
 struct closed_tab {
@@ -41,6 +44,10 @@ struct tab_bar {
     int tab_count;
     int undo_timeout_ms;
     int hovered_tab;             /* index of tab under mouse, -1 if none */
+    bool split_mode;             /* true when split pane mode is active */
+    int split_hovered;           /* index of pane under mouse, -1 if none */
+    int pre_split_lw;            /* saved logical width before split */
+    int pre_split_lh;            /* saved logical height before split */
     int *tab_x_ends;             /* cumulative x end positions for hit-testing */
     bool dirty;
 };
@@ -81,6 +88,19 @@ int tab_count(const struct wl_window *win);
 
 /* Refresh all tab titles from /proc/<pid>/cwd. */
 void tab_bar_refresh_titles(struct wl_window *win, struct terminal *term);
+
+/* Enter split pane mode - show all tabs as live panes. */
+void tab_split_enter(struct wl_window *win);
+
+/* Exit split pane mode - return to tabbed view. */
+void tab_split_exit(struct wl_window *win);
+
+/* Switch focus to a specific pane by index in split mode. */
+void tab_split_focus(struct wl_window *win, int index);
+
+/* Get per-pane frame callback pointer for a terminal in split mode. */
+struct wl_callback **tab_pane_frame_cb(struct wl_window *win,
+                                       struct terminal *term);
 
 /* Get the tab bar height in pixels (0 if hidden). */
 int tab_bar_height(const struct terminal *term);

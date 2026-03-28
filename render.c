@@ -2791,6 +2791,11 @@ commit:
     wl_surface_commit(tb->surface->surface.surf);
 }
 
+static void frame_callback(
+    void *data, struct wl_callback *wl_callback, uint32_t callback_data);
+static const struct wl_callback_listener frame_listener;
+
+
 static void
 render_csd_border(struct terminal *term, enum csd_surface surf_idx,
                   const struct csd_data *info, struct buffer *buf)
@@ -3846,9 +3851,18 @@ grid_render(struct terminal *term)
         int box_count = 0;
         pixman_box32_t *boxes = pixman_region32_rectangles(&damage, &box_count);
 
+        struct wl_surface *damage_surf = term->window->surface.surf;
+        if (term->window->tab_bar.split_mode) {
+            tll_foreach(term->window->tab_bar.tabs, tab_it) {
+                if (tab_it->item.term == term && tab_it->item.pane != NULL) {
+                    damage_surf = tab_it->item.pane->surface.surf;
+                    break;
+                }
+            }
+        }
         for (size_t i = 0; i < box_count; i++) {
             wl_surface_damage_buffer(
-                term->window->surface.surf,
+                damage_surf,
                 boxes[i].x1, boxes[i].y1,
                 boxes[i].x2 - boxes[i].x1, boxes[i].y2 - boxes[i].y1);
         }
@@ -3920,13 +3934,37 @@ grid_render(struct terminal *term)
     xassert(term->grid->offset >= 0 && term->grid->offset < term->grid->num_rows);
     xassert(term->grid->view >= 0 && term->grid->view < term->grid->num_rows);
 
-    xassert(term->window->frame_callback == NULL);
-    term->window->frame_callback = wl_surface_frame(term->window->surface.surf);
-    wl_callback_add_listener(term->window->frame_callback, &frame_listener, term);
+    /* Determine target surface: pane subsurface in split mode, window otherwise */
+    struct wl_surface *target_surf = term->window->surface.surf;
+    struct wayl_surface *target_wayl_surf = &term->window->surface;
 
-    wayl_win_scale(term->window, buf);
+    if (term->window->tab_bar.split_mode) {
+        tll_foreach(term->window->tab_bar.tabs, it) {
+            if (it->item.term == term && it->item.pane != NULL) {
+                target_surf = it->item.pane->surface.surf;
+                target_wayl_surf = &it->item.pane->surface;
+                break;
+            }
+        }
+    }
 
-    if (term->wl->presentation != NULL && term->conf->presentation_timings) {
+    /* Use per-pane frame callback in split mode */
+    struct wl_callback **frame_cb_ptr = &term->window->frame_callback;
+    if (term->window->tab_bar.split_mode) {
+        struct wl_callback **pfc = tab_pane_frame_cb(term->window, term);
+        if (pfc != NULL)
+            frame_cb_ptr = pfc;
+    }
+
+    xassert(*frame_cb_ptr == NULL);
+    *frame_cb_ptr = wl_surface_frame(target_surf);
+    wl_callback_add_listener(*frame_cb_ptr, &frame_listener, term);
+
+    wayl_surface_scale(term->window, target_wayl_surf, buf, term->scale);
+
+    if (!term->window->tab_bar.split_mode &&
+        term->wl->presentation != NULL && term->conf->presentation_timings)
+    {
         struct timespec commit_time;
         clock_gettime(term->wl->presentation_clock_id, &commit_time);
 
@@ -3953,13 +3991,12 @@ grid_render(struct terminal *term)
         }
     }
 
-    if (term->conf->tweak.damage_whole_window) {
-        wl_surface_damage_buffer(
-            term->window->surface.surf, 0, 0, INT32_MAX, INT32_MAX);
+    if (term->conf->tweak.damage_whole_window || term->window->tab_bar.split_mode) {
+        wl_surface_damage_buffer(target_surf, 0, 0, buf->width, buf->height);
     }
 
-    wl_surface_attach(term->window->surface.surf, buf->wl_buf, 0, 0);
-    wl_surface_commit(term->window->surface.surf);
+    wl_surface_attach(target_surf, buf->wl_buf, 0, 0);
+    wl_surface_commit(target_surf);
 }
 
 static void
@@ -4559,9 +4596,22 @@ frame_callback(void *data, struct wl_callback *wl_callback, uint32_t callback_da
 {
     struct terminal *term = data;
 
-    xassert(term->window->frame_callback == wl_callback);
-    wl_callback_destroy(wl_callback);
-    term->window->frame_callback = NULL;
+    /* Clear the correct frame callback: per-pane in split mode, window otherwise */
+    if (term->window->tab_bar.split_mode) {
+        struct wl_callback **pfc = tab_pane_frame_cb(term->window, term);
+        if (pfc != NULL && *pfc == wl_callback) {
+            wl_callback_destroy(wl_callback);
+            *pfc = NULL;
+        } else {
+            xassert(term->window->frame_callback == wl_callback);
+            wl_callback_destroy(wl_callback);
+            term->window->frame_callback = NULL;
+        }
+    } else {
+        xassert(term->window->frame_callback == wl_callback);
+        wl_callback_destroy(wl_callback);
+        term->window->frame_callback = NULL;
+    }
 
     bool grid = term->render.pending.grid;
     bool csd = term->render.pending.csd;
@@ -5201,7 +5251,9 @@ damage_view:
         term->stashed_height = term->height;
     }
 
-    {
+    /* Don't update window geometry in split mode - pane dimensions are
+     * smaller than the window and would shrink the CSD frame */
+    if (!term->window->tab_bar.split_mode) {
         const bool title_shown = wayl_win_csd_titlebar_visible(term->window);
         const bool border_shown = wayl_win_csd_borders_visible(term->window);
 
@@ -5250,6 +5302,7 @@ damage_view:
     render_wait_for_preapply_damage(term);
     shm_unref(term->render.last_buf);
     term->render.last_buf = NULL;
+
     term_damage_view(term);
     render_refresh_csd(term);
     render_refresh_search(term);
@@ -5397,8 +5450,10 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
         if (unlikely(term->shutdown.in_progress || !term->window->is_configured))
             continue;
 
-        /* Skip rendering for inactive tabs - only active tab renders to the window */
-        if (term->window->tab_bar.active != NULL &&
+        /* Skip rendering for inactive tabs (not in split mode) */
+        bool in_split = term->window->tab_bar.split_mode;
+        if (!in_split &&
+            term->window->tab_bar.active != NULL &&
             term->window->tab_bar.active->term != term)
         {
             term->render.refresh.grid = false;
@@ -5409,10 +5464,10 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
         }
 
         bool grid = term->render.refresh.grid;
-        bool csd = term->render.refresh.csd;
+        bool csd = !in_split && term->render.refresh.csd;
         bool search = term->is_searching && term->render.refresh.search;
         bool urls = urls_mode_is_active(term) && term->render.refresh.urls;
-        bool tab_bar = term->window->tab_bar.dirty;
+        bool tab_bar = !in_split && term->window->tab_bar.dirty;
 
         if (!(grid | csd | search | urls | tab_bar))
             continue;
@@ -5425,7 +5480,15 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
         term->render.refresh.search = false;
         term->render.refresh.urls = false;
 
-        if (term->window->frame_callback == NULL) {
+        /* Use per-pane frame callback in split mode */
+        struct wl_callback **frame_cb_ptr = &term->window->frame_callback;
+        if (in_split) {
+            struct wl_callback **pfc = tab_pane_frame_cb(term->window, term);
+            if (pfc != NULL)
+                frame_cb_ptr = pfc;
+        }
+
+        if (*frame_cb_ptr == NULL) {
             struct grid *original_grid = term->grid;
             if (urls_mode_is_active(term)) {
                 xassert(term->url_grid_snapshot != NULL);
@@ -5437,7 +5500,8 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
                 render_csd(term);
                 quirk_weston_csd_off(term);
             }
-            if (term->window->tab_bar.tab_count > 1) {
+            if (term->window->tab_bar.tab_count > 1 &&
+                !term->window->tab_bar.split_mode) {
                 tab_bar_refresh_titles(term->window, term);
                 if (term->window->tab_bar.dirty)
                     render_tab_bar(term);

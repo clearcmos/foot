@@ -1,5 +1,6 @@
 #include "input.h"
 
+#include <math.h>
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
@@ -242,6 +243,15 @@ execute_binding(struct seat *seat, struct terminal *term,
 
     case BIND_ACTION_TAB_UNDO_CLOSE:
         tab_undo_close(term);
+        return true;
+
+    case BIND_ACTION_TAB_EXPOSE:
+        if (tab_count(term->window) > 1) {
+            if (term->window->tab_bar.split_mode)
+                tab_split_exit(term->window);
+            else
+                tab_split_enter(term->window);
+        }
         return true;
 
     case BIND_ACTION_CURSOR_LEFT:
@@ -2536,6 +2546,28 @@ wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
     struct seat *seat = data;
 
     struct wl_window *win = wl_surface_get_user_data(surface);
+
+    /* In split mode, switch focus when pointer enters a different pane */
+    if (win->tab_bar.split_mode) {
+        bool found = false;
+        tll_foreach(win->tab_bar.tabs, it) {
+            if (it->item.pane != NULL &&
+                surface == it->item.pane->surface.surf)
+            {
+                found = true;
+                if (&it->item != win->tab_bar.active) {
+                    int idx = tab_index_of(win, it->item.term);
+                    LOG_INFO("split: pointer entered pane %d, switching focus", idx);
+                    if (idx >= 0)
+                        tab_split_focus(win, idx);
+                }
+                break;
+            }
+        }
+        if (!found)
+            LOG_INFO("split: pointer entered non-pane surface %p", (void *)surface);
+    }
+
     struct terminal *term = win->term;
 
     seat->mouse_focus = term;
@@ -3357,6 +3389,8 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
         break;
 
     case TERM_SURF_GRID: {
+        /* In split mode, clicks are handled per-pane via subsurfaces */
+
         search_cancel(term);
         urls_reset(term);
 

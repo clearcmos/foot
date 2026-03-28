@@ -41,6 +41,8 @@ tab_bar_init(struct tab_bar *tb, int undo_timeout_ms)
         .tab_count = 0,
         .undo_timeout_ms = undo_timeout_ms,
         .hovered_tab = -1,
+        .split_mode = false,
+        .split_hovered = -1,
         .tab_x_ends = NULL,
         .dirty = true,
     };
@@ -151,8 +153,9 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
     struct terminal *old_term = win->tab_bar.active->term;
     struct terminal *new_term = new_tab->term;
 
-    /* Suppress rendering on old tab */
-    old_term->render.refresh.grid = false;
+    /* Suppress rendering on old tab (not in split mode - all panes render) */
+    if (!win->tab_bar.split_mode)
+        old_term->render.refresh.grid = false;
 
     /* Update active tab */
     win->tab_bar.active = new_tab;
@@ -183,9 +186,9 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
         new_term->font_line_height = old_term->font_line_height;
     }
 
-    /* Sync dimensions: resize new tab to match current window */
+    /* Sync dimensions: resize new tab to match current window (skip in split mode) */
     new_term->scale = old_term->scale;
-    {
+    if (!win->tab_bar.split_mode) {
         int logical_width = (int)roundf(old_term->width / old_term->scale);
         int logical_height = (int)roundf(old_term->height / old_term->scale);
         render_resize(new_term, logical_width, logical_height, RESIZE_FORCE);
@@ -224,6 +227,10 @@ tab_new(struct terminal *term)
     struct wl_window *win = term->window;
     struct wayland *wayl = term->wl;
     const struct config *conf = term->conf;
+
+    /* Exit split mode before adding a new tab */
+    if (win->tab_bar.split_mode)
+        tab_split_exit(win);
 
     struct terminal *new_term = term_init(
         conf, term->fdm, term->reaper, wayl,
@@ -384,6 +391,10 @@ tab_close_active(struct terminal *term)
 
     tb->tab_count--;
     tb->dirty = true;
+
+    /* Exit split mode if too few tabs remain */
+    if (tb->tab_count <= 1 && tb->split_mode)
+        tab_split_exit(win);
 
     /* Hide tab bar when down to 1 tab */
     if (tb->tab_count <= 1 && tb->surface != NULL) {
@@ -603,6 +614,137 @@ tab_bar_refresh_titles(struct wl_window *win, struct terminal *term)
     }
 }
 
+void
+tab_split_enter(struct wl_window *win)
+{
+    struct tab_bar *tb = &win->tab_bar;
+    if (tb->tab_count <= 1 || tb->split_mode)
+        return;
+
+    struct terminal *active = tb->active->term;
+    float scale = active->scale;
+
+    /* Save current dimensions for restoring on exit */
+    tb->pre_split_lw = (int)roundf(active->width / scale);
+    tb->pre_split_lh = (int)roundf(active->height / scale);
+
+    /* Calculate layout in logical coordinates to avoid rounding errors.
+     * set_position takes logical coords, render_resize takes logical dims. */
+    int count = tb->tab_count;
+    int cols = (int)ceilf(sqrtf((float)count));
+    int rows = (count + cols - 1) / cols;
+    int total_lw = tb->pre_split_lw;
+    int total_lh = tb->pre_split_lh;
+
+    tb->split_mode = true;
+    tb->split_hovered = -1;
+
+    /* Hide the tab bar subsurface */
+    if (tb->surface != NULL) {
+        wl_surface_attach(tb->surface->surface.surf, NULL, 0, 0);
+        wl_surface_commit(tb->surface->surface.surf);
+    }
+
+    int gap_l = 2;  /* logical gap between panes */
+    int pane_lw = (total_lw - gap_l * (cols - 1)) / cols;
+    int pane_lh = (total_lh - gap_l * (rows - 1)) / rows;
+
+    LOG_DBG("split enter: %d tabs, %dx%d grid, pane=%dx%d logical, total=%dx%d",
+            count, cols, rows, pane_lw, pane_lh, total_lw, total_lh);
+
+    /* Create pane subsurfaces and resize each terminal */
+    int idx = 0;
+    tll_foreach(tb->tabs, it) {
+        struct tab *tab = &it->item;
+        struct terminal *t = tab->term;
+
+        /* Create pane subsurface */
+        tab->pane = xmalloc(sizeof(*tab->pane));
+        memset(tab->pane, 0, sizeof(*tab->pane));
+        if (!wayl_win_subsurface_new(win, tab->pane, true)) {
+            LOG_ERR("failed to create pane subsurface");
+            free(tab->pane);
+            tab->pane = NULL;
+            idx++;
+            continue;
+        }
+
+        /* Position the pane in logical coordinates */
+        int col = idx % cols;
+        int row = idx / cols;
+        int pos_x = col * (pane_lw + gap_l);
+        int pos_y = row * (pane_lh + gap_l);
+        wl_subsurface_set_position(tab->pane->sub, pos_x, pos_y);
+
+        /* Desync so each pane can commit independently */
+        wl_subsurface_set_desync(tab->pane->sub);
+
+        /* Resize terminal to pane dimensions (logical) */
+        render_resize(t, pane_lw, pane_lh, RESIZE_FORCE);
+
+        idx++;
+    }
+
+    /*
+     * Commit the parent surface to apply subsurface position changes
+     * and make the tab bar hide take effect. Subsurface positions are
+     * part of the parent's pending state in Wayland.
+     */
+    wl_surface_commit(win->surface.surf);
+
+    /* Trigger a redraw of all terminals */
+    tll_foreach(tb->tabs, it) {
+        term_damage_all(it->item.term);
+        render_refresh(it->item.term);
+    }
+}
+
+void
+tab_split_exit(struct wl_window *win)
+{
+    struct tab_bar *tb = &win->tab_bar;
+    if (!tb->split_mode)
+        return;
+
+    tb->split_mode = false;
+    tb->split_hovered = -1;
+
+    /* Destroy all pane subsurfaces and frame callbacks */
+    tll_foreach(tb->tabs, it) {
+        if (it->item.pane_frame_cb != NULL) {
+            wl_callback_destroy(it->item.pane_frame_cb);
+            it->item.pane_frame_cb = NULL;
+        }
+        if (it->item.pane != NULL) {
+            wl_surface_attach(it->item.pane->surface.surf, NULL, 0, 0);
+            wl_surface_commit(it->item.pane->surface.surf);
+            wayl_win_subsurface_destroy(it->item.pane);
+            free(it->item.pane);
+            it->item.pane = NULL;
+        }
+    }
+
+    /* Restore all terminals to original dimensions */
+    tll_foreach(tb->tabs, it) {
+        render_resize(it->item.term, tb->pre_split_lw, tb->pre_split_lh,
+                      RESIZE_FORCE);
+    }
+
+    /* Trigger a full redraw and re-show tab bar */
+    struct terminal *active = tb->active->term;
+    term_damage_all(active);
+    render_refresh(active);
+    tb->dirty = true;
+}
+
+void
+tab_split_focus(struct wl_window *win, int index)
+{
+    if (!win->tab_bar.split_mode)
+        return;
+    tab_switch_to(win, index);
+}
+
 int
 tab_index_of(const struct wl_window *win, const struct terminal *term)
 {
@@ -613,6 +755,16 @@ tab_index_of(const struct wl_window *win, const struct terminal *term)
         i++;
     }
     return -1;
+}
+
+struct wl_callback **
+tab_pane_frame_cb(struct wl_window *win, struct terminal *term)
+{
+    tll_foreach(win->tab_bar.tabs, it) {
+        if (it->item.term == term)
+            return &it->item.pane_frame_cb;
+    }
+    return NULL;
 }
 
 int
@@ -627,6 +779,8 @@ tab_bar_height(const struct terminal *term)
     if (term->window == NULL)
         return 0;
     if (term->window->tab_bar.tab_count <= 1)
+        return 0;
+    if (term->window->tab_bar.split_mode)
         return 0;
 
     /* Fixed tab bar height in pixels, scaled for monitor */

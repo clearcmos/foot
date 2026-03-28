@@ -1125,7 +1125,15 @@ xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
         opts |= RESIZE_FORCE;
 #endif
 
-    bool resized = render_resize(term, new_width, new_height, opts);
+    bool resized;
+    if (win->tab_bar.split_mode) {
+        /* In split mode, don't resize individual terminals to window size.
+         * Just handle focus changes. TODO: recalculate pane layout on
+         * actual window resize. */
+        resized = false;
+    } else {
+        resized = render_resize(term, new_width, new_height, opts);
+    }
 
     if (win->configure.is_activated)
         term_visual_focus_in(term);

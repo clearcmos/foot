@@ -4516,8 +4516,17 @@ term_surface_kind(const struct terminal *term, const struct wl_surface *surface)
     else if (term->window->tab_bar.surface != NULL &&
              surface == term->window->tab_bar.surface->surface.surf)
         return TERM_SURF_TAB_BAR;
-    else
-        return TERM_SURF_NONE;
+
+    /* In split mode, pane surfaces are treated as grid surfaces */
+    if (term->window->tab_bar.split_mode) {
+        tll_foreach(term->window->tab_bar.tabs, it) {
+            if (it->item.pane != NULL &&
+                surface == it->item.pane->surface.surf)
+                return TERM_SURF_GRID;
+        }
+    }
+
+    return TERM_SURF_NONE;
 }
 
 static bool
