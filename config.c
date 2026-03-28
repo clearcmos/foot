@@ -3354,10 +3354,12 @@ add_default_key_bindings(struct config *conf)
         {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Prior}}},
         {BIND_ACTION_TAB_NEXT, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Tab}}},
         {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_Tab}}},
+        /* Uncomment to use bare arrow keys for tab switching:
         {BIND_ACTION_TAB_NEXT, m("none"), {{XKB_KEY_Right}}},
         {BIND_ACTION_TAB_PREV, m("none"), {{XKB_KEY_Left}}},
-        {BIND_ACTION_CURSOR_RIGHT, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Right}}},
-        {BIND_ACTION_CURSOR_LEFT, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Left}}},
+        */
+        {BIND_ACTION_TAB_NEXT, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Right}}},
+        {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Left}}},
         {BIND_ACTION_SCROLLBACK_HOME, m("none"), {{XKB_KEY_Home}}},
         {BIND_ACTION_SCROLLBACK_END, m("none"), {{XKB_KEY_End}}},
         {BIND_ACTION_SELECT_ALL, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_a}}},

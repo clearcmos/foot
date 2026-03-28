@@ -2702,7 +2702,18 @@ render_tab_bar(struct terminal *term)
             pixman_color_t fg = color_hex_to_pixman(tab_fg, gamma_correct);
             pixman_image_t *src = pixman_image_create_solid_fill(&fg);
 
-            int text_x = x + text_margin;
+            /* Measure text width for centering */
+            int text_width = 0;
+            for (const char32_t *c = title32; *c != 0; c++) {
+                const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(
+                    font, *c, term->font_subpixel);
+                if (glyph != NULL)
+                    text_width += glyph->advance.x;
+            }
+
+            int text_x = x + (tab_width - text_width) / 2;
+            if (text_x < x + text_margin)
+                text_x = x + text_margin;
             const int max_text_x = x + tab_width - text_margin;
 
             /* Baseline */
