@@ -638,6 +638,8 @@ tab_split_enter(struct wl_window *win)
 
     tb->split_mode = true;
     tb->split_hovered = -1;
+    tb->split_cols = cols;
+    tb->split_rows = rows;
 
     /* Hide the tab bar subsurface */
     if (tb->surface != NULL) {
@@ -645,7 +647,7 @@ tab_split_enter(struct wl_window *win)
         wl_surface_commit(tb->surface->surface.surf);
     }
 
-    int gap_l = 2;  /* logical gap between panes */
+    int gap_l = 0;  /* no gap - pane borders serve as separators */
     int pane_lw = (total_lw - gap_l * (cols - 1)) / cols;
     int pane_lh = (total_lh - gap_l * (rows - 1)) / rows;
 
@@ -672,6 +674,8 @@ tab_split_enter(struct wl_window *win)
         /* Position the pane in logical coordinates */
         int col = idx % cols;
         int row = idx / cols;
+        tab->pane_col = col;
+        tab->pane_row = row;
         int pos_x = col * (pane_lw + gap_l);
         int pos_y = row * (pane_lh + gap_l);
         wl_subsurface_set_position(tab->pane->sub, pos_x, pos_y);
@@ -686,9 +690,8 @@ tab_split_enter(struct wl_window *win)
     }
 
     /*
-     * Commit the parent surface to apply subsurface position changes
-     * and make the tab bar hide take effect. Subsurface positions are
-     * part of the parent's pending state in Wayland.
+     * Commit the parent surface to apply subsurface positions
+     * and make the tab bar hide take effect.
      */
     wl_surface_commit(win->surface.surf);
 

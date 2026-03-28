@@ -1280,7 +1280,7 @@ render_margin(struct terminal *term, struct buffer *buf,
         &buf->dirty[0], &buf->dirty[0],
         rmargin, 0, term->margins.right, term->height);
 
-    if (apply_damage) {
+    if (apply_damage && !term->window->tab_bar.split_mode) {
         /* Top */
         wl_surface_damage_buffer(
             term->window->surface.surf, 0, 0, term->width, term->margins.top);
@@ -1404,9 +1404,11 @@ grid_render_scroll(struct terminal *term, struct buffer *buf,
              (long)memmove_time.tv_sec, memmove_time.tv_nsec);
 #endif
 
-    wl_surface_damage_buffer(
-        term->window->surface.surf, term->margins.left, dst_y,
-        term->width - term->margins.left - term->margins.right, height);
+    if (!term->window->tab_bar.split_mode) {
+        wl_surface_damage_buffer(
+            term->window->surface.surf, term->margins.left, dst_y,
+            term->width - term->margins.left - term->margins.right, height);
+    }
 
     /*
      * TODO: remove this if re-enabling scroll damage when re-applying
@@ -1481,9 +1483,11 @@ grid_render_scroll_reverse(struct terminal *term, struct buffer *buf,
              (long)memmove_time.tv_sec, memmove_time.tv_nsec);
 #endif
 
-    wl_surface_damage_buffer(
-        term->window->surface.surf, term->margins.left, dst_y,
-        term->width - term->margins.left - term->margins.right, height);
+    if (!term->window->tab_bar.split_mode) {
+        wl_surface_damage_buffer(
+            term->window->surface.surf, term->margins.left, dst_y,
+            term->width - term->margins.left - term->margins.right, height);
+    }
 
     /*
      * TODO: remove this if re-enabling scroll damage when re-applying
@@ -1871,9 +1875,11 @@ render_ime_preedit_for_seat(struct terminal *term, struct seat *seat,
     const int damage_w = cells_used * term->cell_width;
     const int damage_h = term->cell_height;
 
-    wl_surface_damage_buffer(
-        term->window->surface.surf,
-        damage_x, damage_y, damage_w, damage_h);
+    if (!term->window->tab_bar.split_mode) {
+        wl_surface_damage_buffer(
+            term->window->surface.surf,
+            damage_x, damage_y, damage_w, damage_h);
+    }
 }
 #endif
 
@@ -1942,7 +1948,20 @@ render_overlay_single_pixel(struct terminal *term, enum overlay_style style,
         roundf(term->width / term->scale),
         roundf(term->height / term->scale));
 
-    wl_subsurface_set_position(overlay->sub, 0, 0);
+    {
+        int ox = 0, oy = 0;
+        if (term->window->tab_bar.split_mode) {
+            struct tab_bar *tb = &term->window->tab_bar;
+            if (tb->active != NULL && tb->active->pane != NULL) {
+                int gap_l = 0;
+                int pane_lw = (tb->pre_split_lw - gap_l * (tb->split_cols - 1)) / tb->split_cols;
+                int pane_lh = (tb->pre_split_lh - gap_l * (tb->split_rows - 1)) / tb->split_rows;
+                ox = tb->active->pane_col * (pane_lw + gap_l);
+                oy = tb->active->pane_row * (pane_lh + gap_l);
+            }
+        }
+        wl_subsurface_set_position(overlay->sub, ox, oy);
+    }
 
     wl_surface_damage_buffer(
         overlay->surface.surf, 0, 0, term->width, term->height);
@@ -2219,7 +2238,20 @@ render_overlay(struct terminal *term)
     quirk_weston_subsurface_desync_on(overlay->sub);
     wayl_surface_scale(
         term->window, &overlay->surface, buf, term->scale);
-    wl_subsurface_set_position(overlay->sub, 0, 0);
+    {
+        int ox = 0, oy = 0;
+        if (term->window->tab_bar.split_mode) {
+            struct tab_bar *tb = &term->window->tab_bar;
+            if (tb->active != NULL && tb->active->pane != NULL) {
+                int gap_l = 0;
+                int pane_lw = (tb->pre_split_lw - gap_l * (tb->split_cols - 1)) / tb->split_cols;
+                int pane_lh = (tb->pre_split_lh - gap_l * (tb->split_rows - 1)) / tb->split_rows;
+                ox = tb->active->pane_col * (pane_lw + gap_l);
+                oy = tb->active->pane_row * (pane_lh + gap_l);
+            }
+        }
+        wl_subsurface_set_position(overlay->sub, ox, oy);
+    }
     wl_surface_attach(overlay->surface.surf, buf->wl_buf, 0, 0);
 
     wl_surface_damage_buffer(
@@ -3988,6 +4020,50 @@ grid_render(struct terminal *term)
 
             term->render.input_time.tv_sec = 0;
             term->render.input_time.tv_nsec = 0;
+        }
+    }
+
+    /* Draw pane borders in split mode - only on edges facing the window edge,
+     * not between adjacent panes (to avoid doubled borders) */
+    if (term->window->tab_bar.split_mode) {
+        struct tab_bar *tb = &term->window->tab_bar;
+        int pcol = -1, prow = -1;
+        tll_foreach(tb->tabs, it) {
+            if (it->item.term == term) {
+                pcol = it->item.pane_col;
+                prow = it->item.pane_row;
+                break;
+            }
+        }
+
+        if (pcol >= 0) {
+            const int bw = 1;
+
+            /* Blend fg/bg at ~25% fg to get a stable border color that
+             * doesn't flicker when content underneath changes */
+            uint32_t fg = term->colors.fg;
+            uint32_t bg = term->colors.bg;
+            uint8_t r = ((fg >> 16 & 0xff) + 3 * (bg >> 16 & 0xff)) / 4;
+            uint8_t g = ((fg >>  8 & 0xff) + 3 * (bg >>  8 & 0xff)) / 4;
+            uint8_t b = ((fg       & 0xff) + 3 * (bg       & 0xff)) / 4;
+            uint32_t bdr_hex = 0xff000000 | (r << 16) | (g << 8) | b;
+            const bool gc = wayl_do_linear_blending(term->wl, term->conf);
+            pixman_color_t bdr = color_hex_to_pixman(bdr_hex, gc);
+
+            int n = 0;
+            pixman_rectangle16_t sides[4];
+            if (pcol > 0)                    /* shared edge with pane to the left */
+                sides[n++] = (pixman_rectangle16_t){0, 0, bw, buf->height};
+            if (pcol < tb->split_cols - 1)   /* shared edge with pane to the right */
+                sides[n++] = (pixman_rectangle16_t){buf->width - bw, 0, bw, buf->height};
+            if (prow > 0)                    /* shared edge with pane above */
+                sides[n++] = (pixman_rectangle16_t){0, 0, buf->width, bw};
+            if (prow < tb->split_rows - 1)   /* shared edge with pane below */
+                sides[n++] = (pixman_rectangle16_t){0, buf->height - bw, buf->width, bw};
+
+            if (n > 0)
+                pixman_image_fill_rectangles(
+                    PIXMAN_OP_SRC, buf->pix[0], &bdr, n, sides);
         }
     }
 

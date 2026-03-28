@@ -199,14 +199,32 @@ execute_binding(struct seat *seat, struct terminal *term,
 
     case BIND_ACTION_FONT_SIZE_UP:
         term_font_size_increase(term);
+        if (term->window->tab_bar.split_mode) {
+            tll_foreach(term->window->tab_bar.tabs, it) {
+                if (it->item.term != term)
+                    term_font_size_increase(it->item.term);
+            }
+        }
         return true;
 
     case BIND_ACTION_FONT_SIZE_DOWN:
         term_font_size_decrease(term);
+        if (term->window->tab_bar.split_mode) {
+            tll_foreach(term->window->tab_bar.tabs, it) {
+                if (it->item.term != term)
+                    term_font_size_decrease(it->item.term);
+            }
+        }
         return true;
 
     case BIND_ACTION_FONT_SIZE_RESET:
         term_font_size_reset(term);
+        if (term->window->tab_bar.split_mode) {
+            tll_foreach(term->window->tab_bar.tabs, it) {
+                if (it->item.term != term)
+                    term_font_size_reset(it->item.term);
+            }
+        }
         return true;
 
     case BIND_ACTION_SPAWN_TERMINAL:

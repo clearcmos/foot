@@ -19,6 +19,8 @@ struct tab {
     bool urgent;
     struct wayl_sub_surface *pane;      /* split mode pane surface, NULL in tab mode */
     struct wl_callback *pane_frame_cb;  /* per-pane frame callback in split mode */
+    int pane_col;                       /* column in split grid */
+    int pane_row;                       /* row in split grid */
 };
 
 struct closed_tab {
@@ -48,6 +50,8 @@ struct tab_bar {
     int split_hovered;           /* index of pane under mouse, -1 if none */
     int pre_split_lw;            /* saved logical width before split */
     int pre_split_lh;            /* saved logical height before split */
+    int split_cols;              /* number of columns in split grid */
+    int split_rows;              /* number of rows in split grid */
     int *tab_x_ends;             /* cumulative x end positions for hit-testing */
     bool dirty;
 };
