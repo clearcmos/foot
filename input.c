@@ -100,6 +100,9 @@ execute_binding(struct seat *seat, struct terminal *term,
         return true;
 
     case BIND_ACTION_SCROLLBACK_UP_PAGE:
+        LOG_INFO("scrollback_up_page: term=%p grid==normal=%d rows=%d view=%d offset=%d",
+                 (void *)term, term->grid == &term->normal, term->rows,
+                 term->grid->view, term->grid->offset);
         if (term->grid == &term->normal) {
             cmd_scrollback_up(term, term->rows);
             return true;

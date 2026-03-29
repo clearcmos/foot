@@ -1303,6 +1303,42 @@ render_margin(struct terminal *term, struct buffer *buf,
     }
 }
 
+/* After a scroll memmove in split mode, clear any border pixels that
+ * were moved to wrong positions. Fill the border edges with bg color
+ * so the next border draw (at end of grid_render) is clean. */
+static void
+split_clear_scrolled_borders(struct terminal *term, struct buffer *buf)
+{
+    if (!term->window->tab_bar.split_mode)
+        return;
+
+    struct tab_bar *tb = &term->window->tab_bar;
+    const bool gc = wayl_do_linear_blending(term->wl, term->conf);
+    uint32_t bg_hex = 0xff000000 | (term->colors.bg & 0x00ffffff);
+    pixman_color_t bg = color_hex_to_pixman(bg_hex, gc);
+
+    tll_foreach(tb->tabs, it) {
+        if (it->item.term != term)
+            continue;
+        int pcol = it->item.pane_col;
+        int prow = it->item.pane_row;
+        int n = 0;
+        pixman_rectangle16_t sides[4];
+        if (pcol > 0)
+            sides[n++] = (pixman_rectangle16_t){0, 0, 1, buf->height};
+        if (pcol < tb->split_cols - 1)
+            sides[n++] = (pixman_rectangle16_t){buf->width - 1, 0, 1, buf->height};
+        if (prow > 0)
+            sides[n++] = (pixman_rectangle16_t){0, 0, buf->width, 1};
+        if (prow < tb->split_rows - 1)
+            sides[n++] = (pixman_rectangle16_t){0, buf->height - 1, buf->width, 1};
+        if (n > 0)
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_SRC, buf->pix[0], &bg, n, sides);
+        break;
+    }
+}
+
 static void
 grid_render_scroll(struct terminal *term, struct buffer *buf,
                    const struct damage *dmg)
@@ -1392,6 +1428,8 @@ grid_render_scroll(struct terminal *term, struct buffer *buf,
                 height * buf->stride);
     }
 
+    split_clear_scrolled_borders(term, buf);
+
 #if TIME_SCROLL_DAMAGE
     struct timespec end_time;
     clock_gettime(CLOCK_MONOTONIC, &end_time);
@@ -1470,6 +1508,8 @@ grid_render_scroll_reverse(struct terminal *term, struct buffer *buf,
                 raw + src_y * buf->stride,
                 height * buf->stride);
     }
+
+    split_clear_scrolled_borders(term, buf);
 
 #if TIME_SCROLL_DAMAGE
     struct timespec end_time;
@@ -1931,6 +1971,11 @@ render_overlay_single_pixel(struct terminal *term, enum overlay_style style,
 
     quirk_weston_subsurface_desync_on(overlay->sub);
 
+    /* In split mode, pane subsurfaces stack above the overlay.
+     * Place overlay on top so it's visible over the pane content. */
+    if (term->window->tab_bar.split_mode)
+        wl_subsurface_place_above(overlay->sub, term->window->surface.surf);
+
     if (style != term->render.last_overlay_style) {
         buf = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
             wayl->single_pixel_manager,
@@ -2236,6 +2281,10 @@ render_overlay(struct terminal *term)
     }
 
     quirk_weston_subsurface_desync_on(overlay->sub);
+
+    if (term->window->tab_bar.split_mode)
+        wl_subsurface_place_above(overlay->sub, term->window->surface.surf);
+
     wayl_surface_scale(
         term->window, &overlay->surface, buf, term->scale);
     {
@@ -3902,9 +3951,13 @@ grid_render(struct terminal *term)
 
     pixman_region32_fini(&damage);
 
-    render_overlay(term);
+    /* In split mode, flash is rendered directly into the pane buffer,
+     * so skip the overlay subsurface (it's hidden behind pane subsurfaces) */
+    if (!term->window->tab_bar.split_mode)
+        render_overlay(term);
     render_ime_preedit(term, buf);
-    render_scrollback_position(term);
+    if (!term->window->tab_bar.split_mode)
+        render_scrollback_position(term);
 
     if (term->conf->tweak.render_timer != RENDER_TIMER_NONE) {
         struct timespec end_time;
@@ -4023,8 +4076,7 @@ grid_render(struct terminal *term)
         }
     }
 
-    /* Draw pane borders in split mode - only on edges facing the window edge,
-     * not between adjacent panes (to avoid doubled borders) */
+    /* Draw pane borders in split mode on shared edges */
     if (term->window->tab_bar.split_mode) {
         struct tab_bar *tb = &term->window->tab_bar;
         int pcol = -1, prow = -1;
@@ -4038,9 +4090,6 @@ grid_render(struct terminal *term)
 
         if (pcol >= 0) {
             const int bw = 1;
-
-            /* Blend fg/bg at ~25% fg to get a stable border color that
-             * doesn't flicker when content underneath changes */
             uint32_t fg = term->colors.fg;
             uint32_t bg = term->colors.bg;
             uint8_t r = ((fg >> 16 & 0xff) + 3 * (bg >> 16 & 0xff)) / 4;
@@ -4052,18 +4101,72 @@ grid_render(struct terminal *term)
 
             int n = 0;
             pixman_rectangle16_t sides[4];
-            if (pcol > 0)                    /* shared edge with pane to the left */
+            if (pcol > 0)
                 sides[n++] = (pixman_rectangle16_t){0, 0, bw, buf->height};
-            if (pcol < tb->split_cols - 1)   /* shared edge with pane to the right */
+            if (pcol < tb->split_cols - 1)
                 sides[n++] = (pixman_rectangle16_t){buf->width - bw, 0, bw, buf->height};
-            if (prow > 0)                    /* shared edge with pane above */
+            if (prow > 0)
                 sides[n++] = (pixman_rectangle16_t){0, 0, buf->width, bw};
-            if (prow < tb->split_rows - 1)   /* shared edge with pane below */
+            if (prow < tb->split_rows - 1)
                 sides[n++] = (pixman_rectangle16_t){0, buf->height - bw, buf->width, bw};
 
             if (n > 0)
                 pixman_image_fill_rectangles(
                     PIXMAN_OP_SRC, buf->pix[0], &bdr, n, sides);
+        }
+
+        /* Render flash message directly into pane buffer (overlay subsurface
+         * is hidden behind pane subsurfaces, so we draw it inline) */
+        if (term->flash.active && term->flash.message != NULL &&
+            term->fonts[0] != NULL)
+        {
+            const bool gc = wayl_do_linear_blending(term->wl, term->conf);
+            struct fcft_font *font = term->fonts[0];
+            char32_t *msg32 = ambstoc32(term->flash.message);
+            if (msg32 != NULL) {
+                int text_width = 0;
+                for (const char32_t *c = msg32; *c; c++) {
+                    const struct fcft_glyph *gl = fcft_rasterize_char_utf32(
+                        font, *c, term->font_subpixel);
+                    if (gl) text_width += gl->advance.x;
+                }
+
+                int x = (buf->width - text_width) / 2;
+                int font_height = max(font->height, font->ascent + font->descent);
+                int y_top = (buf->height - font_height) / 2;
+                int baseline = y_top + font->ascent;
+                int pad = font->max_advance.x;
+
+                pixman_color_t pill_bg = color_hex_to_pixman_with_alpha(
+                    0xff333333, 0xd000, gc);
+                pixman_image_fill_rectangles(
+                    PIXMAN_OP_OVER, buf->pix[0], &pill_bg, 1,
+                    &(pixman_rectangle16_t){
+                        x - pad, y_top - pad/2,
+                        text_width + pad*2, font_height + pad});
+
+                pixman_color_t text_color = color_hex_to_pixman(0xffeeeeee, gc);
+                pixman_image_t *src = pixman_image_create_solid_fill(&text_color);
+                for (const char32_t *c = msg32; *c; c++) {
+                    const struct fcft_glyph *gl = fcft_rasterize_char_utf32(
+                        font, *c, term->font_subpixel);
+                    if (gl == NULL) continue;
+                    if (pixman_image_get_format(gl->pix) == PIXMAN_a8r8g8b8) {
+                        pixman_image_composite32(
+                            PIXMAN_OP_OVER, gl->pix, NULL, buf->pix[0],
+                            0, 0, 0, 0, x + gl->x, baseline - gl->y,
+                            gl->width, gl->height);
+                    } else {
+                        pixman_image_composite32(
+                            PIXMAN_OP_OVER, src, gl->pix, buf->pix[0],
+                            0, 0, 0, 0, x + gl->x, baseline - gl->y,
+                            gl->width, gl->height);
+                    }
+                    x += gl->advance.x;
+                }
+                pixman_image_unref(src);
+                free(msg32);
+            }
         }
     }
 

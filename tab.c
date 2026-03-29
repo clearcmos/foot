@@ -654,6 +654,31 @@ tab_split_enter(struct wl_window *win)
     LOG_DBG("split enter: %d tabs, %dx%d grid, pane=%dx%d logical, total=%dx%d",
             count, cols, rows, pane_lw, pane_lh, total_lw, total_lh);
 
+    /* Sync zoom level from active tab to all others */
+    tll_foreach(tb->tabs, it) {
+        struct terminal *t = it->item.term;
+        if (t == active)
+            continue;
+        if (t->cell_width != active->cell_width ||
+            t->cell_height != active->cell_height)
+        {
+            for (size_t i = 0; i < 4; i++) {
+                const struct config_font_list *fl = &active->conf->fonts[i];
+                for (size_t j = 0; j < fl->count; j++)
+                    t->font_sizes[i][j] = active->font_sizes[i][j];
+                fcft_destroy(t->fonts[i]);
+                t->fonts[i] = active->fonts[i] != NULL
+                    ? fcft_clone(active->fonts[i]) : NULL;
+            }
+            t->cell_width = active->cell_width;
+            t->cell_height = active->cell_height;
+            t->font_x_ofs = active->font_x_ofs;
+            t->font_y_ofs = active->font_y_ofs;
+            t->font_baseline = active->font_baseline;
+            t->font_line_height = active->font_line_height;
+        }
+    }
+
     /* Create pane subsurfaces and resize each terminal */
     int idx = 0;
     tll_foreach(tb->tabs, it) {
