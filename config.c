@@ -155,6 +155,8 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_TAB_EXPOSE] = "tab-expose",
     [BIND_ACTION_CURSOR_LEFT] = "cursor-left",
     [BIND_ACTION_CURSOR_RIGHT] = "cursor-right",
+    [BIND_ACTION_CURSOR_LEFT_WORD] = "cursor-left-word",
+    [BIND_ACTION_CURSOR_RIGHT_WORD] = "cursor-right-word",
     [BIND_ACTION_DELETE_PREV_WORD] = "delete-prev-word",
     [BIND_ACTION_SELECT_ALL] = "select-all",
 
@@ -3365,6 +3367,8 @@ add_default_key_bindings(struct config *conf)
         {BIND_ACTION_SCROLLBACK_HOME, m("none"), {{XKB_KEY_Home}}},
         {BIND_ACTION_SCROLLBACK_END, m("none"), {{XKB_KEY_End}}},
         {BIND_ACTION_SELECT_ALL, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_a}}},
+        {BIND_ACTION_CURSOR_LEFT_WORD, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Left}}},
+        {BIND_ACTION_CURSOR_RIGHT_WORD, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Right}}},
         {BIND_ACTION_DELETE_PREV_WORD, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_BackSpace}}},
         {BIND_ACTION_TAB_UNDO_CLOSE, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_d}}},
     };

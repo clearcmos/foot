@@ -289,6 +289,14 @@ execute_binding(struct seat *seat, struct terminal *term,
             term_to_slave(term, "\x1b[C", 3);
         return true;
 
+    case BIND_ACTION_CURSOR_LEFT_WORD:
+        term_to_slave(term, "\x1b" "b", 2);  /* ESC b = backward-word */
+        return true;
+
+    case BIND_ACTION_CURSOR_RIGHT_WORD:
+        term_to_slave(term, "\x1b" "f", 2);  /* ESC f = forward-word */
+        return true;
+
     case BIND_ACTION_DELETE_PREV_WORD:
         term_to_slave(term, "\x17", 1);  /* Ctrl+W = 0x17 */
         return true;
