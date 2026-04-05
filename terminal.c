@@ -1747,11 +1747,65 @@ fdm_terminate_timeout(struct fdm *fdm, int fd, int events, void *data)
     return true;
 }
 
+static char *
+state_file_path(void)
+{
+    const char *state_home = getenv("XDG_STATE_HOME");
+    const char *home = getenv("HOME");
+    char *dir, *path;
+
+    if (state_home != NULL && state_home[0] != '\0') {
+        dir = xstrjoin(state_home, "/foot");
+        path = xstrjoin(state_home, "/foot/state");
+    } else if (home != NULL) {
+        dir = xstrjoin(home, "/.local/state/foot");
+        path = xstrjoin(home, "/.local/state/foot/state");
+    } else {
+        return NULL;
+    }
+
+    mkdir(dir, 0700);
+    free(dir);
+    return path;
+}
+
+static void
+state_save(struct terminal *term)
+{
+    char *path = state_file_path();
+    if (path == NULL)
+        return;
+
+    FILE *f = fopen(path, "w");
+    free(path);
+    if (f == NULL)
+        return;
+
+    /* Save window dimensions (physical pixels) */
+    fprintf(f, "width=%d\n", term->width);
+    fprintf(f, "height=%d\n", term->height);
+
+    /* Save primary font size (index 0, first font) */
+    if (term->font_sizes[0] != NULL) {
+        if (term->font_sizes[0][0].px_size > 0)
+            fprintf(f, "font_px=%d\n", term->font_sizes[0][0].px_size);
+        else
+            fprintf(f, "font_pt=%.2f\n", term->font_sizes[0][0].pt_size);
+    }
+
+    fclose(f);
+    LOG_INFO("saved window state");
+}
+
 bool
 term_shutdown(struct terminal *term)
 {
     if (term->shutdown.in_progress)
         return true;
+
+    /* Save window state before tearing anything down */
+    if (term->window != NULL)
+        state_save(term);
 
     term->shutdown.in_progress = true;
 
@@ -1855,56 +1909,6 @@ sig_alarm(int signo)
     alarm_raised = 1;
 }
 
-static char *
-state_file_path(void)
-{
-    const char *state_home = getenv("XDG_STATE_HOME");
-    const char *home = getenv("HOME");
-    char *dir, *path;
-
-    if (state_home != NULL && state_home[0] != '\0') {
-        dir = xstrjoin(state_home, "/foot");
-        path = xstrjoin(state_home, "/foot/state");
-    } else if (home != NULL) {
-        dir = xstrjoin(home, "/.local/state/foot");
-        path = xstrjoin(home, "/.local/state/foot/state");
-    } else {
-        return NULL;
-    }
-
-    mkdir(dir, 0700);
-    free(dir);
-    return path;
-}
-
-static void
-state_save(struct terminal *term)
-{
-    char *path = state_file_path();
-    if (path == NULL)
-        return;
-
-    FILE *f = fopen(path, "w");
-    free(path);
-    if (f == NULL)
-        return;
-
-    /* Save window dimensions (physical pixels) */
-    fprintf(f, "width=%d\n", term->width);
-    fprintf(f, "height=%d\n", term->height);
-
-    /* Save primary font size (index 0, first font) */
-    if (term->font_sizes[0] != NULL) {
-        if (term->font_sizes[0][0].px_size > 0)
-            fprintf(f, "font_px=%d\n", term->font_sizes[0][0].px_size);
-        else
-            fprintf(f, "font_pt=%.2f\n", term->font_sizes[0][0].pt_size);
-    }
-
-    fclose(f);
-    LOG_INFO("saved window state");
-}
-
 void
 term_load_state(struct terminal *term)
 {
@@ -1981,10 +1985,6 @@ term_destroy(struct terminal *term)
     fdm_del(term->fdm, term->ptmx);
     if (term->shutdown.terminate_timeout_fd >= 0)
         fdm_del(term->fdm, term->shutdown.terminate_timeout_fd);
-
-    /* Save window state before destroying */
-    if (term->window != NULL)
-        state_save(term);
 
     if (term->window != NULL) {
         struct wl_window *win = term->window;
