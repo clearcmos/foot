@@ -892,6 +892,7 @@ void term_damage_rows_in_view(struct terminal *term, int start, int end);
 
 void term_damage_all(struct terminal *term);
 void term_damage_view(struct terminal *term);
+void term_load_state(struct terminal *term);
 
 void term_damage_cursor(struct terminal *term);
 void term_damage_margins(struct terminal *term);

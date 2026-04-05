@@ -1478,6 +1478,9 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
                 term->font_sizes[i][j] = parent->font_sizes[i][j];
         }
     } else {
+        /* Restore saved font size and window dimensions from last session */
+        term_load_state(term);
+
         /* Initialize the Wayland window backend */
         if ((term->window = wayl_win_init(term, token)) == NULL)
             goto err;
@@ -1852,6 +1855,104 @@ sig_alarm(int signo)
     alarm_raised = 1;
 }
 
+static char *
+state_file_path(void)
+{
+    const char *state_home = getenv("XDG_STATE_HOME");
+    const char *home = getenv("HOME");
+    char *dir, *path;
+
+    if (state_home != NULL && state_home[0] != '\0') {
+        dir = xstrjoin(state_home, "/foot");
+        path = xstrjoin(state_home, "/foot/state");
+    } else if (home != NULL) {
+        dir = xstrjoin(home, "/.local/state/foot");
+        path = xstrjoin(home, "/.local/state/foot/state");
+    } else {
+        return NULL;
+    }
+
+    mkdir(dir, 0700);
+    free(dir);
+    return path;
+}
+
+static void
+state_save(struct terminal *term)
+{
+    char *path = state_file_path();
+    if (path == NULL)
+        return;
+
+    FILE *f = fopen(path, "w");
+    free(path);
+    if (f == NULL)
+        return;
+
+    /* Save window dimensions (physical pixels) */
+    fprintf(f, "width=%d\n", term->width);
+    fprintf(f, "height=%d\n", term->height);
+
+    /* Save primary font size (index 0, first font) */
+    if (term->font_sizes[0] != NULL) {
+        if (term->font_sizes[0][0].px_size > 0)
+            fprintf(f, "font_px=%d\n", term->font_sizes[0][0].px_size);
+        else
+            fprintf(f, "font_pt=%.2f\n", term->font_sizes[0][0].pt_size);
+    }
+
+    fclose(f);
+    LOG_INFO("saved window state");
+}
+
+void
+term_load_state(struct terminal *term)
+{
+    char *path = state_file_path();
+    if (path == NULL)
+        return;
+
+    FILE *f = fopen(path, "r");
+    free(path);
+    if (f == NULL)
+        return;
+
+    char line[256];
+    int width = 0, height = 0;
+    float font_pt = 0;
+    int font_px = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "width=%d", &width) == 1) continue;
+        if (sscanf(line, "height=%d", &height) == 1) continue;
+        if (sscanf(line, "font_pt=%f", &font_pt) == 1) continue;
+        if (sscanf(line, "font_px=%d", &font_px) == 1) continue;
+    }
+    fclose(f);
+
+    /* Restore font size across all weights */
+    if (font_pt > 0 || font_px > 0) {
+        for (size_t i = 0; i < 4; i++) {
+            const struct config_font_list *fl = &term->conf->fonts[i];
+            for (size_t j = 0; j < fl->count; j++) {
+                if (font_px > 0)
+                    term->font_sizes[i][j].px_size = font_px;
+                else
+                    term->font_sizes[i][j].pt_size = font_pt;
+            }
+        }
+    }
+
+    /* Restore window size by overriding the config */
+    if (width > 0 && height > 0) {
+        term->stashed_width = width;
+        term->stashed_height = height;
+    }
+
+    LOG_INFO("restored window state (w=%d, h=%d, pt=%.2f, px=%d)",
+             width, height, font_pt, font_px);
+}
+
 int
 term_destroy(struct terminal *term)
 {
@@ -1880,6 +1981,10 @@ term_destroy(struct terminal *term)
     fdm_del(term->fdm, term->ptmx);
     if (term->shutdown.terminate_timeout_fd >= 0)
         fdm_del(term->fdm, term->shutdown.terminate_timeout_fd);
+
+    /* Save window state before destroying */
+    if (term->window != NULL)
+        state_save(term);
 
     if (term->window != NULL) {
         struct wl_window *win = term->window;
