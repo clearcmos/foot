@@ -4170,6 +4170,18 @@ grid_render(struct terminal *term)
         }
     }
 
+    /* Dim inactive panes in split mode */
+    if (term->window->tab_bar.split_mode &&
+        term->window->tab_bar.active->term != term)
+    {
+        const bool gc = wayl_do_linear_blending(term->wl, term->conf);
+        pixman_color_t dim = color_hex_to_pixman_with_alpha(
+            0xff000000, 0x3000, gc);
+        pixman_image_fill_rectangles(
+            PIXMAN_OP_OVER, buf->pix[0], &dim, 1,
+            &(pixman_rectangle16_t){0, 0, buf->width, buf->height});
+    }
+
     if (term->conf->tweak.damage_whole_window || term->window->tab_bar.split_mode) {
         wl_surface_damage_buffer(target_surf, 0, 0, buf->width, buf->height);
     }

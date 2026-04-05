@@ -72,7 +72,8 @@ Key implementation details:
 - The render loop (`fdm_hook_refresh_pending_terminals`) skips the inactive-tab filter when `split_mode` is true, allowing all terminals to render.
 - `grid_render()` detects split mode and commits to the pane subsurface instead of the window surface. Damage is reported on the pane surface.
 - `do_tab_switch()` does not suppress rendering or resize terminals in split mode, since all panes render independently.
-- Mouse hover over a pane switches focus via `wl_pointer_enter` detecting pane surfaces in `input.c`.
+- Click-to-focus: clicking a pane switches focus (hover just tracks `split_hovered` for hit-testing). `do_tab_switch()` redraws both old and new panes to update dim state.
+- Inactive panes are dimmed with a semi-transparent black overlay applied at the end of `grid_render()`.
 - Window geometry (`xdg_surface_set_window_geometry`) and configure events are suppressed in split mode to prevent the compositor from resizing panes to full window size.
 - Pane dimensions use the pre-split content area (tab bar space is not reclaimed) to match the window geometry the compositor knows about.
 - Creating a new tab or closing down to 1 tab exits split mode automatically.

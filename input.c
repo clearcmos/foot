@@ -2576,25 +2576,18 @@ wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
 
     struct wl_window *win = wl_surface_get_user_data(surface);
 
-    /* In split mode, switch focus when pointer enters a different pane */
+    /* In split mode, track which pane the pointer is over (focus on click) */
     if (win->tab_bar.split_mode) {
-        bool found = false;
+        int idx = 0;
         tll_foreach(win->tab_bar.tabs, it) {
             if (it->item.pane != NULL &&
                 surface == it->item.pane->surface.surf)
             {
-                found = true;
-                if (&it->item != win->tab_bar.active) {
-                    int idx = tab_index_of(win, it->item.term);
-                    LOG_INFO("split: pointer entered pane %d, switching focus", idx);
-                    if (idx >= 0)
-                        tab_split_focus(win, idx);
-                }
+                win->tab_bar.split_hovered = idx;
                 break;
             }
+            idx++;
         }
-        if (!found)
-            LOG_INFO("split: pointer entered non-pane surface %p", (void *)surface);
     }
 
     struct terminal *term = win->term;
@@ -3135,6 +3128,19 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
     bool send_to_client = false;
 
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        /* In split mode, click focuses the hovered pane */
+        if (term->window->tab_bar.split_mode &&
+            term->window->tab_bar.split_hovered >= 0)
+        {
+            int idx = term->window->tab_bar.split_hovered;
+            int active_idx = tab_index_of(term->window,
+                                          term->window->tab_bar.active->term);
+            if (idx != active_idx) {
+                tab_split_focus(term->window, idx);
+                term = seat->mouse_focus;
+            }
+        }
+
         if (seat->wl_touch != NULL && seat->touch.state == TOUCH_STATE_IDLE) {
             seat->touch.state = TOUCH_STATE_INHIBITED;
         }

@@ -212,6 +212,13 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
     /* Trigger full redraw of the new tab */
     term_damage_all(new_term);
     render_refresh(new_term);
+
+    /* In split mode, also redraw old pane to update dim state */
+    if (win->tab_bar.split_mode) {
+        term_damage_all(old_term);
+        render_refresh(old_term);
+    }
+
     win->tab_bar.dirty = true;
 
     /* Update window title */
@@ -739,8 +746,9 @@ tab_split_enter(struct wl_window *win)
      */
     wl_surface_commit(win->surface.surf);
 
-    /* Trigger a redraw of all terminals */
+    /* Trigger a full redraw of all terminals including margins */
     tll_foreach(tb->tabs, it) {
+        term_damage_margins(it->item.term);
         term_damage_all(it->item.term);
         render_refresh(it->item.term);
     }
