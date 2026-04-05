@@ -380,6 +380,20 @@ tab_close_active(struct terminal *term)
 
     LOG_INFO("tab closed, grid preserved for undo");
 
+    /* Destroy the closing tab's pane subsurface before removing from list */
+    bool was_split = tb->split_mode;
+    if (closing->pane_frame_cb != NULL) {
+        wl_callback_destroy(closing->pane_frame_cb);
+        closing->pane_frame_cb = NULL;
+    }
+    if (closing->pane != NULL) {
+        wl_surface_attach(closing->pane->surface.surf, NULL, 0, 0);
+        wl_surface_commit(closing->pane->surface.surf);
+        wayl_win_subsurface_destroy(closing->pane);
+        free(closing->pane);
+        closing->pane = NULL;
+    }
+
     /* Remove from tab list */
     tll_foreach(tb->tabs, it) {
         if (&it->item == closing) {
@@ -395,6 +409,11 @@ tab_close_active(struct terminal *term)
     /* Exit split mode if too few tabs remain */
     if (tb->tab_count <= 1 && tb->split_mode)
         tab_split_exit(win);
+    else if (was_split && tb->split_mode) {
+        /* Still in split mode with 2+ tabs - re-layout the panes */
+        tab_split_exit(win);
+        tab_split_enter(win);
+    }
 
     /* Hide tab bar when down to 1 tab */
     if (tb->tab_count <= 1 && tb->surface != NULL) {
