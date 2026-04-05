@@ -657,8 +657,15 @@ tab_split_enter(struct wl_window *win)
     /* Calculate layout in logical coordinates to avoid rounding errors.
      * set_position takes logical coords, render_resize takes logical dims. */
     int count = tb->tab_count;
-    int cols = (int)ceilf(sqrtf((float)count));
-    int rows = (count + cols - 1) / cols;
+    int cols, rows;
+    if (count <= 3) {
+        /* 2-3 panes: side by side columns, full height each */
+        cols = count;
+        rows = 1;
+    } else {
+        cols = (int)ceilf(sqrtf((float)count));
+        rows = (count + cols - 1) / cols;
+    }
     int total_lw = tb->pre_split_lw;
     int total_lh = tb->pre_split_lh;
 
