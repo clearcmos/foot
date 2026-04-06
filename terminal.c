@@ -1781,9 +1781,10 @@ state_save(struct terminal *term)
     if (f == NULL)
         return;
 
-    /* Save window dimensions (physical pixels) */
+    /* Save window dimensions (physical pixels) and state */
     fprintf(f, "width=%d\n", term->width);
     fprintf(f, "height=%d\n", term->height);
+    fprintf(f, "maximized=%d\n", term->window->is_maximized ? 1 : 0);
 
     /* Save primary font size (index 0, first font) */
     if (term->font_sizes[0] != NULL) {
@@ -1923,12 +1924,14 @@ term_load_state(struct terminal *term)
 
     char line[256];
     int width = 0, height = 0;
+    int maximized = 0;
     float font_pt = 0;
     int font_px = 0;
 
     while (fgets(line, sizeof(line), f)) {
         if (sscanf(line, "width=%d", &width) == 1) continue;
         if (sscanf(line, "height=%d", &height) == 1) continue;
+        if (sscanf(line, "maximized=%d", &maximized) == 1) continue;
         if (sscanf(line, "font_pt=%f", &font_pt) == 1) continue;
         if (sscanf(line, "font_px=%d", &font_px) == 1) continue;
     }
@@ -1947,14 +1950,16 @@ term_load_state(struct terminal *term)
         }
     }
 
-    /* Restore window size by overriding the config */
-    if (width > 0 && height > 0) {
+    /* Restore window size and maximized state */
+    if (maximized) {
+        ((struct config *)term->conf)->startup_mode = STARTUP_MAXIMIZED;
+    } else if (width > 0 && height > 0) {
         term->stashed_width = width;
         term->stashed_height = height;
     }
 
-    LOG_INFO("restored window state (w=%d, h=%d, pt=%.2f, px=%d)",
-             width, height, font_pt, font_px);
+    LOG_INFO("restored window state (w=%d, h=%d, maximized=%d, pt=%.2f, px=%d)",
+             width, height, maximized, font_pt, font_px);
 }
 
 int
