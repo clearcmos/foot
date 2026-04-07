@@ -4787,6 +4787,11 @@ frame_callback(void *data, struct wl_callback *wl_callback, uint32_t callback_da
 {
     struct terminal *term = data;
 
+    if (term->window == NULL) {
+        wl_callback_destroy(wl_callback);
+        return;
+    }
+
     /* Clear the correct frame callback: per-pane in split mode, window otherwise */
     if (term->window->tab_bar.split_mode) {
         struct wl_callback **pfc = tab_pane_frame_cb(term->window, term);
