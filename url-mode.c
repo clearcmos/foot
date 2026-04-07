@@ -655,6 +655,129 @@ urls_open_at_position(struct seat *seat, struct terminal *term,
 }
 
 static void
+hover_tag_cells(struct terminal *term, const struct range *range, bool value)
+{
+    struct grid *grid = term->grid;
+    const struct coord *start = &range->start;
+    const struct coord *end = &range->end;
+
+    size_t end_r = end->row & (grid->num_rows - 1);
+    size_t r = start->row & (grid->num_rows - 1);
+    size_t c = start->col;
+
+    struct row *row = grid->rows[r];
+    if (row == NULL)
+        return;
+    row->dirty = true;
+
+    while (true) {
+        struct cell *cell = &row->cells[c];
+        cell->attrs.url = value;
+        cell->attrs.clean = 0;
+
+        if (r == end_r && c == (size_t)end->col)
+            break;
+
+        if (++c >= (size_t)term->cols) {
+            r = (r + 1) & (grid->num_rows - 1);
+            c = 0;
+            row = grid->rows[r];
+            if (row == NULL)
+                break;
+            row->dirty = true;
+        }
+    }
+}
+
+static bool
+url_contains_position(const struct url *url, int col, int abs_row)
+{
+    const struct coord *start = &url->range.start;
+    const struct coord *end = &url->range.end;
+
+    if (start->row == end->row)
+        return abs_row == start->row && col >= start->col && col <= end->col;
+
+    if (abs_row == start->row)
+        return col >= start->col;
+    if (abs_row == end->row)
+        return col <= end->col;
+    return abs_row > start->row && abs_row < end->row;
+}
+
+void
+urls_hover_update(struct terminal *term, int col, int row)
+{
+    int abs_row = term->grid->view + row;
+
+    /* Invalidate cache if view has scrolled */
+    if (term->url_hover.valid && term->url_hover.last_view != term->grid->view) {
+        if (term->url_hover.active) {
+            hover_tag_cells(term, &term->url_hover.range, false);
+            term->url_hover.active = false;
+        }
+        term->url_hover.valid = false;
+    }
+
+    /* Build cache if needed */
+    if (!term->url_hover.valid) {
+        tll_foreach(term->url_hover.urls, it) {
+            url_destroy(&it->item);
+            tll_remove(term->url_hover.urls, it);
+        }
+        urls_collect(term, URL_ACTION_LAUNCH, &term->conf->url.preg,
+                     true, &term->url_hover.urls);
+        term->url_hover.valid = true;
+        term->url_hover.last_view = term->grid->view;
+    }
+
+    /* Check if cursor is already on the highlighted URL */
+    if (term->url_hover.active &&
+        url_contains_position(
+            &(struct url){.range = term->url_hover.range}, col, abs_row))
+    {
+        return;
+    }
+
+    /* Clear previous highlight */
+    if (term->url_hover.active) {
+        hover_tag_cells(term, &term->url_hover.range, false);
+        term->url_hover.active = false;
+    }
+
+    /* Find URL under cursor */
+    tll_foreach(term->url_hover.urls, it) {
+        if (url_contains_position(&it->item, col, abs_row)) {
+            term->url_hover.range = it->item.range;
+            term->url_hover.active = true;
+            hover_tag_cells(term, &term->url_hover.range, true);
+            render_refresh(term);
+            return;
+        }
+    }
+
+    render_refresh(term);
+}
+
+void
+urls_hover_clear(struct terminal *term)
+{
+    if (term->url_hover.active) {
+        hover_tag_cells(term, &term->url_hover.range, false);
+        term->url_hover.active = false;
+        render_refresh(term);
+    }
+
+    if (term->url_hover.valid) {
+        tll_foreach(term->url_hover.urls, it) {
+            url_destroy(&it->item);
+            tll_remove(term->url_hover.urls, it);
+        }
+        term->url_hover.valid = false;
+    }
+}
+
+static void
 generate_key_combos(const struct config *conf,
                     size_t count, char32_t *combos[static count])
 {

@@ -2036,6 +2036,7 @@ term_destroy(struct terminal *term)
     key_binding_unref(term->wl->key_binding_manager, term->conf);
 
     urls_reset(term);
+    urls_hover_clear(term);
 
     free(term->vt.osc.data);
     free(term->vt.osc8.uri);

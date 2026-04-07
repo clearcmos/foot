@@ -574,6 +574,14 @@ struct terminal {
     } flash;
 
     struct {
+        url_list_t urls;      /* cached URL list for hover hit-testing */
+        bool valid;           /* whether the cache is current */
+        bool active;          /* a URL is currently highlighted */
+        struct range range;   /* range of the currently highlighted URL */
+        int last_view;        /* grid view offset when cache was built */
+    } url_hover;
+
+    struct {
         enum { BLINK_ON, BLINK_OFF } state;
         int fd;
     } blink;

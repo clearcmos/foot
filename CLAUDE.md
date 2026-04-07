@@ -80,6 +80,7 @@ Key implementation details:
 
 ## Mouse interaction (custom features)
 
+- URLs are underlined on hover. `urls_hover_update()` / `urls_hover_clear()` in `url-mode.c` manage a cached URL list (`term->url_hover`) and toggle `cell->attrs.url` on the live grid. Cache auto-invalidates on scroll (view offset change).
 - Ctrl+Click opens URLs under the cursor in the default browser. Uses `urls_collect()` to find regex and OSC-8 URLs, then `urls_open_at_position()` in `url-mode.c` launches via the configured URL launcher with XDG activation token support.
 - Right-click with an active selection copies the selected text to clipboard and deselects. No flash notification -- the deselection itself is the feedback.
 - Flash notification positioning supports `term->flash.use_mouse_pos` to anchor the pill at the mouse cursor (top-right) instead of screen center. Currently only used by the Ctrl+A select-all flash (centered).

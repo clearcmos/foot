@@ -25,6 +25,9 @@ bool urls_open_at_position(
     struct seat *seat, struct terminal *term,
     int col, int row, uint32_t serial);
 
+void urls_hover_update(struct terminal *term, int col, int row);
+void urls_hover_clear(struct terminal *term);
+
 void urls_input(struct seat *seat, struct terminal *term,
                 const struct key_binding_set *bindings, uint32_t key,
                 xkb_keysym_t sym, xkb_mod_mask_t mods, xkb_mod_mask_t consumed,

@@ -2990,6 +2990,14 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
                 seat->mouse.x - term->margins.left,
                 seat->kbd.shift, seat->kbd.alt, seat->kbd.ctrl);
         }
+
+        /* URL hover highlighting */
+        if (cursor_is_on_new_cell || !term->url_hover.valid) {
+            if (cursor_is_on_grid)
+                urls_hover_update(term, seat->mouse.col, seat->mouse.row);
+            else if (term->url_hover.active)
+                urls_hover_clear(term);
+        }
         break;
     }
     }
@@ -3438,6 +3446,7 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
 
             /* Ctrl+Click: open URL under cursor */
             if (cursor_is_on_grid && button == BTN_LEFT && seat->kbd.ctrl) {
+                urls_hover_clear(term);
                 if (urls_open_at_position(
                         seat, term,
                         seat->mouse.col, seat->mouse.row, serial))
