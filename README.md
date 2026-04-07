@@ -78,6 +78,8 @@ This fork adds multi-tab support:
 * Tab bar with dynamic-width tabs showing the current path (~/...)
 * Tabs inherit the current zoom level
 * Mouse hover and click on tabs to switch
+* Ctrl+Click to open URLs in the default browser
+* Right-click to copy selected text to clipboard
 
 # Installing
 

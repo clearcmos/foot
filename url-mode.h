@@ -21,6 +21,10 @@ void urls_assign_key_combos(const struct config *conf, url_list_t *urls);
 void urls_render(struct terminal *term, const struct config_spawn_template *launch);
 void urls_reset(struct terminal *term);
 
+bool urls_open_at_position(
+    struct seat *seat, struct terminal *term,
+    int col, int row, uint32_t serial);
+
 void urls_input(struct seat *seat, struct terminal *term,
                 const struct key_binding_set *bindings, uint32_t key,
                 xkb_keysym_t sym, xkb_mod_mask_t mods, xkb_mod_mask_t consumed,

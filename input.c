@@ -309,6 +309,7 @@ execute_binding(struct seat *seat, struct terminal *term,
             text_to_clipboard(seat, term, text, serial);
             free(term->flash.message);
             term->flash.message = xstrdup("Copied to clipboard");
+            term->flash.use_mouse_pos = false;
             term_flash(term, 500);
             term_damage_view(term);
             render_refresh(term);
@@ -3435,7 +3436,35 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
         case WL_POINTER_BUTTON_STATE_PRESSED: {
             bool consumed = false;
 
-            if (cursor_is_on_grid && term_mouse_grabbed(term, seat)) {
+            /* Ctrl+Click: open URL under cursor */
+            if (cursor_is_on_grid && button == BTN_LEFT && seat->kbd.ctrl) {
+                if (urls_open_at_position(
+                        seat, term,
+                        seat->mouse.col, seat->mouse.row, serial))
+                {
+                    consumed = true;
+                }
+            }
+
+            /* Right-click: copy selection to clipboard */
+            if (!consumed && cursor_is_on_grid &&
+                button == BTN_RIGHT &&
+                term->selection.kind != SELECTION_NONE)
+            {
+                char *text = selection_to_text(term);
+                if (text != NULL) {
+                    if (text_to_clipboard(seat, term, text, serial)) {
+                        selection_cancel(term);
+                        term_damage_view(term);
+                        render_refresh(term);
+                    } else {
+                        free(text);
+                    }
+                    consumed = true;
+                }
+            }
+
+            if (!consumed && cursor_is_on_grid && term_mouse_grabbed(term, seat)) {
                 const struct key_binding *match =
                     match_mouse_binding(seat, term, button);
 

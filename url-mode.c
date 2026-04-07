@@ -558,6 +558,102 @@ urls_collect(const struct terminal *term, enum url_action action,
     remove_overlapping(urls, term->grid->num_cols);
 }
 
+struct click_activation_context {
+    struct terminal *term;
+    char *url;
+    const struct config_spawn_template *launch;
+};
+
+static void
+click_activation_token_done(const char *token, void *data)
+{
+    struct click_activation_context *ctx = data;
+
+    size_t argc;
+    char **argv;
+    int dev_null = open("/dev/null", O_RDWR);
+    if (dev_null >= 0) {
+        if (spawn_expand_template(
+                ctx->launch, 2,
+                (const char *[]){"url", "match"},
+                (const char *[]){ctx->url, ctx->url},
+                &argc, &argv))
+        {
+            spawn(ctx->term->reaper, ctx->term->cwd, argv,
+                  dev_null, dev_null, dev_null, NULL, NULL, token);
+            for (size_t i = 0; i < argc; i++)
+                free(argv[i]);
+            free(argv);
+        }
+        close(dev_null);
+    }
+    free(ctx->url);
+    free(ctx);
+}
+
+bool
+urls_open_at_position(struct seat *seat, struct terminal *term,
+                      int col, int row, uint32_t serial)
+{
+    /* row is view-relative, convert to absolute for range comparison */
+    int abs_row = term->grid->view + row;
+
+    url_list_t urls = tll_init();
+    urls_collect(term, URL_ACTION_LAUNCH, &term->conf->url.preg, true, &urls);
+
+    char *matched_url = NULL;
+    tll_foreach(urls, it) {
+        const struct url *url = &it->item;
+        const struct coord *start = &url->range.start;
+        const struct coord *end = &url->range.end;
+
+        bool in_range = false;
+        if (start->row == end->row) {
+            in_range = abs_row == start->row &&
+                       col >= start->col && col <= end->col;
+        } else {
+            if (abs_row == start->row)
+                in_range = col >= start->col;
+            else if (abs_row == end->row)
+                in_range = col <= end->col;
+            else
+                in_range = abs_row > start->row && abs_row < end->row;
+        }
+
+        if (in_range) {
+            matched_url = xstrdup(url->url);
+            break;
+        }
+    }
+
+    tll_foreach(urls, it) {
+        url_destroy(&it->item);
+        tll_remove(urls, it);
+    }
+
+    if (matched_url == NULL)
+        return false;
+
+    const struct config_spawn_template *launch = &term->conf->url.launch;
+    struct click_activation_context *ctx = xmalloc(sizeof(*ctx));
+    *ctx = (struct click_activation_context){
+        .term = term,
+        .url = matched_url,
+        .launch = launch,
+    };
+
+    if (wayl_get_activation_token(
+            seat->wayl, seat, serial, term->window,
+            &click_activation_token_done, ctx))
+    {
+        return true;
+    }
+
+    /* Fallback: launch without activation token */
+    click_activation_token_done(NULL, ctx);
+    return true;
+}
+
 static void
 generate_key_combos(const struct config *conf,
                     size_t count, char32_t *combos[static count])

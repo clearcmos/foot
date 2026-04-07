@@ -2239,16 +2239,31 @@ render_overlay(struct terminal *term)
                 if (g) text_width += g->advance.x;
             }
 
-            /* Center position */
-            int x = (term->width - text_width) / 2;
             int font_height = max(font->height, font->ascent + font->descent);
-            int y_top = (term->height - font_height) / 2;
+            int pad = font->max_advance.x;
+            int x, y_top;
+
+            if (term->flash.use_mouse_pos) {
+                /* Anchor pill to top-right of cursor */
+                x = term->flash.mouse_x;
+                y_top = term->flash.mouse_y - font_height - pad;
+
+                /* Clamp to screen bounds */
+                if (x < pad) x = pad;
+                if (x + text_width + pad > term->width)
+                    x = term->width - text_width - pad;
+                if (y_top < pad) y_top = pad;
+            } else {
+                /* Center on screen */
+                x = (term->width - text_width) / 2;
+                y_top = (term->height - font_height) / 2;
+            }
+
             int baseline = y_top + font->ascent;
 
             /* Draw background pill */
-            int pad = font->max_advance.x;
             pixman_color_t pill_bg = color_hex_to_pixman_with_alpha(
-                0xff333333, 0xd000, gc);
+                0xff333333, 0xffff, gc);
             pixman_image_fill_rectangles(
                 PIXMAN_OP_OVER, buf->pix[0], &pill_bg, 1,
                 &(pixman_rectangle16_t){
@@ -4131,14 +4146,26 @@ grid_render(struct terminal *term)
                     if (gl) text_width += gl->advance.x;
                 }
 
-                int x = (buf->width - text_width) / 2;
                 int font_height = max(font->height, font->ascent + font->descent);
-                int y_top = (buf->height - font_height) / 2;
-                int baseline = y_top + font->ascent;
                 int pad = font->max_advance.x;
+                int x, y_top;
+
+                if (term->flash.use_mouse_pos) {
+                    x = term->flash.mouse_x;
+                    y_top = term->flash.mouse_y - font_height - pad;
+                    if (x < pad) x = pad;
+                    if (x + text_width + pad > buf->width)
+                        x = buf->width - text_width - pad;
+                    if (y_top < pad) y_top = pad;
+                } else {
+                    x = (buf->width - text_width) / 2;
+                    y_top = (buf->height - font_height) / 2;
+                }
+
+                int baseline = y_top + font->ascent;
 
                 pixman_color_t pill_bg = color_hex_to_pixman_with_alpha(
-                    0xff333333, 0xd000, gc);
+                    0xff333333, 0xffff, gc);
                 pixman_image_fill_rectangles(
                     PIXMAN_OP_OVER, buf->pix[0], &pill_bg, 1,
                     &(pixman_rectangle16_t){

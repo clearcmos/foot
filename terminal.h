@@ -569,6 +569,8 @@ struct terminal {
         bool active;
         int fd;
         char *message;  /* optional text to show during flash */
+        bool use_mouse_pos;  /* anchor to mouse position instead of center */
+        int mouse_x, mouse_y;  /* pixel coords when use_mouse_pos is set */
     } flash;
 
     struct {
