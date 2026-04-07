@@ -241,8 +241,32 @@ execute_binding(struct seat *seat, struct terminal *term,
     case BIND_ACTION_TAB_CLOSE: {
         pid_t fg_pgid = tcgetpgrp(term->ptmx);
         pid_t shell_pgid = getpgid(term->slave);
-        if (fg_pgid != -1 && shell_pgid != -1 && fg_pgid != shell_pgid)
-            return false;  /* Child process running - pass through */
+        if (fg_pgid != -1 && shell_pgid != -1 && fg_pgid != shell_pgid) {
+            /* Subprocess running - only pass through for whitelisted programs */
+            static const char *passthrough[] = {"nano", NULL};
+            char comm_path[64];
+            char comm[256] = {0};
+            snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)fg_pgid);
+            FILE *f = fopen(comm_path, "r");
+            if (f != NULL) {
+                if (fgets(comm, sizeof(comm), f) != NULL) {
+                    /* Strip trailing newline */
+                    size_t len = strlen(comm);
+                    if (len > 0 && comm[len - 1] == '\n')
+                        comm[len - 1] = '\0';
+                }
+                fclose(f);
+            }
+            bool pass = false;
+            for (const char **p = passthrough; *p != NULL; p++) {
+                if (strcmp(comm, *p) == 0) {
+                    pass = true;
+                    break;
+                }
+            }
+            if (pass)
+                return false;  /* Whitelisted process - pass Ctrl+W through */
+        }
         if (!tab_close_active(term)) {
             /* Last tab - close window */
             term_shutdown(term);

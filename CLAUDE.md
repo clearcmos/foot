@@ -60,7 +60,9 @@ Key implementation details:
 - `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab.
 - Grid vertical margin is anchored to the top (`pad_top`, not centered) to prevent text jumping during zoom.
 
-Keybindings: Ctrl+T (new), Ctrl+W (close), Ctrl+Tab / Ctrl+Shift+Tab (next/prev), Ctrl+Shift+D (undo close). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement.
+Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev), Ctrl+Shift+D (undo close). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement.
+
+Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab unless the process is whitelisted. The whitelist is a `passthrough` array in `input.c` `BIND_ACTION_TAB_CLOSE` handler (currently: `nano`). Process name is read from `/proc/<pgid>/comm`.
 
 ## Split pane mode (custom feature, WIP)
 
