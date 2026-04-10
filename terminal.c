@@ -3981,6 +3981,19 @@ term_bell(struct terminal *term)
 bool
 term_spawn_new(const struct terminal *term)
 {
+    /* Read the shell's actual cwd from /proc, falling back to term->cwd */
+    char proc_path[64];
+    char cwd_buf[PATH_MAX];
+    const char *cwd = term->cwd;
+    if (term->slave > 0) {
+        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
+        ssize_t len = readlink(proc_path, cwd_buf, sizeof(cwd_buf) - 1);
+        if (len > 0) {
+            cwd_buf[len] = '\0';
+            cwd = cwd_buf;
+        }
+    }
+
     char *argv[4];
     int argc = 0;
 
@@ -3992,7 +4005,7 @@ term_spawn_new(const struct terminal *term)
     argv[argc] = NULL;
 
     return spawn(
-        term->reaper, term->cwd, argv,
+        term->reaper, cwd, argv,
         -1, -1, -1, NULL, NULL, NULL) >= 0;
 }
 

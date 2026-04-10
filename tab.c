@@ -239,9 +239,22 @@ tab_new(struct terminal *term)
     if (win->tab_bar.split_mode)
         tab_split_exit(win);
 
+    /* Read the shell's actual cwd from /proc, falling back to term->cwd */
+    char proc_path[64];
+    char cwd_buf[PATH_MAX];
+    const char *cwd = term->cwd;
+    if (term->slave > 0) {
+        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
+        ssize_t len = readlink(proc_path, cwd_buf, sizeof(cwd_buf) - 1);
+        if (len > 0) {
+            cwd_buf[len] = '\0';
+            cwd = cwd_buf;
+        }
+    }
+
     struct terminal *new_term = term_init(
         conf, term->fdm, term->reaper, wayl,
-        term->foot_exe, term->cwd,
+        term->foot_exe, cwd,
         NULL,  /* token */
         NULL,  /* pty_path */
         0, NULL, NULL,  /* argc, argv, envp - use defaults from conf */
