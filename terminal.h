@@ -378,6 +378,7 @@ enum overlay_style {
     OVERLAY_SEARCH,
     OVERLAY_FLASH,
     OVERLAY_UNICODE_MODE,
+    OVERLAY_HELP,
 };
 
 typedef tll(struct ptmx_buffer) ptmx_buffer_list_t;
@@ -580,6 +581,8 @@ struct terminal {
         struct range range;   /* range of the currently highlighted URL */
         int last_view;        /* grid view offset when cache was built */
     } url_hover;
+
+    bool help_visible;
 
     struct {
         enum { BLINK_ON, BLINK_OFF } state;

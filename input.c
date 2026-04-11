@@ -680,6 +680,12 @@ execute_binding(struct seat *seat, struct terminal *term,
             term, seat->mouse.col, seat->mouse.row, SELECTION_LINE_WISE, false);
         return true;
 
+    case BIND_ACTION_SHOW_HELP:
+        term->help_visible = !term->help_visible;
+        render_overlay(term);
+        wl_surface_commit(term->window->surface.surf);
+        return true;
+
     case BIND_ACTION_COUNT:
         BUG("Invalid action type");
         return false;
@@ -1774,6 +1780,13 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
     xassert(bindings != NULL);
 
     if (pressed) {
+        if (term->help_visible) {
+            term->help_visible = false;
+            render_overlay(term);
+            wl_surface_commit(term->window->surface.surf);
+            return;
+        }
+
         if (term->unicode_mode.active) {
             unicode_mode_input(seat, term, sym);
             return;

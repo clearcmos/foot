@@ -2029,6 +2029,7 @@ render_overlay(struct terminal *term)
 
     const enum overlay_style style =
         term->is_searching ? OVERLAY_SEARCH :
+        term->help_visible ? OVERLAY_HELP :
         term->flash.active ? OVERLAY_FLASH :
         unicode_mode_active ? OVERLAY_UNICODE_MODE :
         OVERLAY_NONE;
@@ -2059,6 +2060,10 @@ render_overlay(struct terminal *term)
                 wayl_do_linear_blending(term->wl, term->conf));
         break;
 
+    case OVERLAY_HELP:
+        color = (pixman_color_t){0, 0, 0, 0xbfff};
+        break;
+
     case OVERLAY_NONE:
         xassert(false);
         break;
@@ -2070,6 +2075,7 @@ render_overlay(struct terminal *term)
     const bool single_pixel =
         (style == OVERLAY_UNICODE_MODE || style == OVERLAY_FLASH) &&
         !has_flash_message &&
+        style != OVERLAY_HELP &&
         term->wl->single_pixel_manager != NULL &&
         overlay->surface.viewport != NULL;
 
@@ -2203,7 +2209,8 @@ render_overlay(struct terminal *term)
 
     else if (buf == term->render.last_overlay_buf &&
              style == term->render.last_overlay_style &&
-             !has_flash_message)
+             !has_flash_message &&
+             style != OVERLAY_HELP)
     {
         xassert(style == OVERLAY_FLASH || style == OVERLAY_UNICODE_MODE);
         shm_did_not_use_buf(buf);
@@ -2293,6 +2300,191 @@ render_overlay(struct terminal *term)
             pixman_image_unref(src);
             free(msg32);
         }
+    }
+
+    /* Render help card centered on overlay */
+    if (style == OVERLAY_HELP && term->fonts[0] != NULL) {
+        const bool gc = wayl_do_linear_blending(term->wl, term->conf);
+        struct fcft_font *font = term->fonts[0];
+
+        struct help_entry {
+            const char *key;   /* NULL = blank separator line */
+            const char *desc;  /* NULL = single-column line (title/footer) */
+        };
+        static const struct help_entry entries[] = {
+            {"Keyboard Shortcuts", NULL},
+            {NULL, NULL},
+            {"Ctrl+T",            "New tab"},
+            {"Ctrl+W",            "Close tab"},
+            {"Ctrl+Tab",          "Next tab"},
+            {"Ctrl+Shift+Tab",    "Previous tab"},
+            {"Shift+Right/Left",  "Next/prev tab"},
+            {"Ctrl+Shift+D",      "Undo close tab"},
+            {"Ctrl+E",            "Toggle split pane"},
+            {"Ctrl+N",            "New window"},
+            {NULL, NULL},
+            {"Ctrl+Shift+C",      "Copy"},
+            {"Ctrl+Shift+V",      "Paste"},
+            {"Ctrl+A",            "Select all + copy"},
+            {"Right-click",       "Copy selection"},
+            {NULL, NULL},
+            {"Ctrl+F",            "Search"},
+            {"Ctrl+Click",        "Open URL"},
+            {NULL, NULL},
+            {"Ctrl++/-/0",        "Zoom in/out/reset"},
+            {"Ctrl+Left/Right",   "Word jump"},
+            {"Ctrl+Backspace",    "Delete word"},
+            {NULL, NULL},
+            {"F1",                "This help"},
+            {"Press any key to close", NULL},
+        };
+        const int entry_count = sizeof(entries) / sizeof(entries[0]);
+        int font_height = max(font->height, font->ascent + font->descent);
+        int line_spacing = font_height + font_height / 4;
+        int pad = font->max_advance.x;
+
+        /* Helper to measure a string's pixel width */
+        #define MEASURE_STR(s, out_w) do { \
+            (out_w) = 0; \
+            char32_t *_m32 = ambstoc32(s); \
+            if (_m32) { \
+                for (const char32_t *_c = _m32; *_c; _c++) { \
+                    const struct fcft_glyph *_g = fcft_rasterize_char_utf32( \
+                        font, *_c, term->font_subpixel); \
+                    if (_g) (out_w) += _g->advance.x; \
+                } \
+                free(_m32); \
+            } \
+        } while (0)
+
+        /* Find widest key column and widest description column */
+        int max_key_w = 0, max_desc_w = 0;
+        for (int i = 0; i < entry_count; i++) {
+            if (entries[i].key != NULL && entries[i].desc != NULL) {
+                int kw, dw;
+                MEASURE_STR(entries[i].key, kw);
+                MEASURE_STR(entries[i].desc, dw);
+                if (kw > max_key_w) max_key_w = kw;
+                if (dw > max_desc_w) max_desc_w = dw;
+            } else if (entries[i].key != NULL) {
+                int tw;
+                MEASURE_STR(entries[i].key, tw);
+                /* single-column lines measured separately below */
+                (void)tw;
+            }
+        }
+
+        int col_gap = pad * 2;
+        int two_col_w = max_key_w + col_gap + max_desc_w;
+
+        /* Also check single-column lines (title, footer) */
+        int max_single_w = 0;
+        for (int i = 0; i < entry_count; i++) {
+            if (entries[i].key != NULL && entries[i].desc == NULL) {
+                int tw;
+                MEASURE_STR(entries[i].key, tw);
+                if (tw > max_single_w) max_single_w = tw;
+            }
+        }
+
+        int content_w = max(two_col_w, max_single_w);
+        int card_w = content_w + pad * 3;
+        int card_h = entry_count * line_spacing + pad * 2;
+        int card_x = (term->width - card_w) / 2;
+        int card_y = (term->height - card_h) / 2;
+        int left_margin = card_x + pad * 3 / 2;
+        int desc_x = left_margin + max_key_w + col_gap;
+
+        if (card_x < 0) card_x = 0;
+        if (card_y < 0) card_y = 0;
+
+        /* Draw card background */
+        pixman_color_t card_bg = color_hex_to_pixman_with_alpha(
+            0xff1a1a2e, 0xf800, gc);
+        pixman_image_fill_rectangles(
+            PIXMAN_OP_OVER, buf->pix[0], &card_bg, 1,
+            &(pixman_rectangle16_t){card_x, card_y, card_w, card_h});
+
+        /* Draw border */
+        pixman_color_t border_color = color_hex_to_pixman_with_alpha(
+            0xff444466, 0xc000, gc);
+        int bw = 1;
+        pixman_rectangle16_t borders[] = {
+            {card_x, card_y, card_w, bw},
+            {card_x, card_y + card_h - bw, card_w, bw},
+            {card_x, card_y, bw, card_h},
+            {card_x + card_w - bw, card_y, bw, card_h},
+        };
+        pixman_image_fill_rectangles(
+            PIXMAN_OP_OVER, buf->pix[0], &border_color, 4, borders);
+
+        /* Helper to draw a string at (x, baseline) with a given color */
+        #define DRAW_STR(s, draw_x, baseline, clr) do { \
+            char32_t *_d32 = ambstoc32(s); \
+            if (_d32) { \
+                pixman_image_t *_src = pixman_image_create_solid_fill(clr); \
+                int _dx = (draw_x); \
+                for (const char32_t *_c = _d32; *_c; _c++) { \
+                    const struct fcft_glyph *_g = fcft_rasterize_char_utf32( \
+                        font, *_c, term->font_subpixel); \
+                    if (_g == NULL) continue; \
+                    if (pixman_image_get_format(_g->pix) == PIXMAN_a8r8g8b8) { \
+                        pixman_image_composite32( \
+                            PIXMAN_OP_OVER, _g->pix, NULL, buf->pix[0], \
+                            0, 0, 0, 0, _dx + _g->x, (baseline) - _g->y, \
+                            _g->width, _g->height); \
+                    } else { \
+                        pixman_image_composite32( \
+                            PIXMAN_OP_OVER, _src, _g->pix, buf->pix[0], \
+                            0, 0, 0, 0, _dx + _g->x, (baseline) - _g->y, \
+                            _g->width, _g->height); \
+                    } \
+                    _dx += _g->advance.x; \
+                } \
+                pixman_image_unref(_src); \
+                free(_d32); \
+            } \
+        } while (0)
+
+        pixman_color_t title_color = color_hex_to_pixman(0xffffffff, gc);
+        pixman_color_t text_color = color_hex_to_pixman(0xffcccccc, gc);
+        pixman_color_t dim_color = color_hex_to_pixman(0xff888888, gc);
+
+        for (int i = 0; i < entry_count; i++) {
+            if (entries[i].key == NULL)
+                continue;
+
+            int baseline = card_y + pad + i * line_spacing + font->ascent;
+
+            if (entries[i].desc == NULL) {
+                /* Single-column line: title or footer */
+                pixman_color_t *clr = (i == 0) ? &title_color : &dim_color;
+
+                /* Center it */
+                int tw;
+                MEASURE_STR(entries[i].key, tw);
+                int cx = card_x + (card_w - tw) / 2;
+
+                DRAW_STR(entries[i].key, cx, baseline, clr);
+            } else {
+                /* Two-column line: key on left, description aligned */
+                DRAW_STR(entries[i].key, left_margin, baseline, &text_color);
+                DRAW_STR(entries[i].desc, desc_x, baseline, &text_color);
+            }
+        }
+
+        #undef MEASURE_STR
+        #undef DRAW_STR
+
+        /* Separator line under title */
+        pixman_color_t sep_color = color_hex_to_pixman_with_alpha(
+            0xff444466, 0xa000, gc);
+        int sep_y = card_y + pad + line_spacing - line_spacing / 4;
+        pixman_image_fill_rectangles(
+            PIXMAN_OP_OVER, buf->pix[0], &sep_color, 1,
+            &(pixman_rectangle16_t){
+                card_x + pad, sep_y,
+                card_w - pad * 2, 1});
     }
 
     quirk_weston_subsurface_desync_on(overlay->sub);

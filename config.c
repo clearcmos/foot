@@ -159,6 +159,7 @@ static const char *const binding_action_map[] = {
     [BIND_ACTION_CURSOR_RIGHT_WORD] = "cursor-right-word",
     [BIND_ACTION_DELETE_PREV_WORD] = "delete-prev-word",
     [BIND_ACTION_SELECT_ALL] = "select-all",
+    [BIND_ACTION_SHOW_HELP] = "show-help",
 
     /* Mouse-specific actions */
     [BIND_ACTION_SCROLLBACK_UP_MOUSE] = "scrollback-up-mouse",
@@ -3372,6 +3373,7 @@ add_default_key_bindings(struct config *conf)
         {BIND_ACTION_CURSOR_RIGHT_WORD, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Right}}},
         {BIND_ACTION_DELETE_PREV_WORD, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_BackSpace}}},
         {BIND_ACTION_TAB_UNDO_CLOSE, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_d}}},
+        {BIND_ACTION_SHOW_HELP, m("none"), {{XKB_KEY_F1}}},
     };
 
     conf->bindings.key.count = ALEN(bindings);

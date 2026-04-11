@@ -60,7 +60,7 @@ Key implementation details:
 - `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab.
 - Grid vertical margin is anchored to the top (`pad_top`, not centered) to prevent text jumping during zoom.
 
-Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev), Ctrl+Shift+D (undo close). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement.
+Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev), Ctrl+Shift+D (undo close). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement. F1 shows the keyboard shortcuts help card.
 
 Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab unless the process is whitelisted. The whitelist is a `passthrough` array in `input.c` `BIND_ACTION_TAB_CLOSE` handler (currently: `nano`). Process name is read from `/proc/<pgid>/comm`.
 
@@ -86,6 +86,10 @@ Key implementation details:
 - Ctrl+Click opens URLs under the cursor in the default browser. Uses `urls_collect()` to find regex and OSC-8 URLs, then `urls_open_at_position()` in `url-mode.c` launches via the configured URL launcher with XDG activation token support.
 - Right-click with an active selection copies the selected text to clipboard and deselects. No flash notification -- the deselection itself is the feedback.
 - Flash notification positioning supports `term->flash.use_mouse_pos` to anchor the pill at the mouse cursor (top-right) instead of screen center. Currently only used by the Ctrl+A select-all flash (centered).
+
+## Help overlay (custom feature)
+
+F1 toggles a keyboard shortcuts help card rendered as an `OVERLAY_HELP` overlay in `render_overlay()` in `render.c`. The card uses a two-column layout (key + description) with fixed pixel column positions for alignment. State is tracked via `term->help_visible` in `terminal.h`. Any keypress dismisses the overlay (handled in `key_press_release()` in `input.c` before normal binding dispatch). The `BIND_ACTION_SHOW_HELP` action is defined in `key-binding.h` with default F1 binding in `config.c`.
 
 ## Build Options
 
