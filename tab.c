@@ -387,6 +387,15 @@ tab_close_active(struct terminal *term)
         closing_term->slave = -1;
     }
 
+    /* Destroy any pending window frame callback that references the closing
+     * terminal. If not cleared here, the callback fires with term->window==NULL
+     * and destroys itself without clearing win->frame_callback, leaving a
+     * dangling pointer that causes a double-free crash in wayl_win_destroy. */
+    if (win->frame_callback != NULL) {
+        wl_callback_destroy(win->frame_callback);
+        win->frame_callback = NULL;
+    }
+
     closing_term->window = NULL;
 
     tll_push_back(tb->closed, ((struct closed_tab){
