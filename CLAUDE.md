@@ -64,6 +64,8 @@ Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cw
 
 Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab unless the process is whitelisted. The whitelist is a `passthrough` array in `input.c` `BIND_ACTION_TAB_CLOSE` handler (currently: `nano`). Process name is read from `/proc/<pgid>/comm`.
 
+Ctrl+A select-all behavior: when a subprocess is running whose name matches the passthrough list in `BIND_ACTION_SELECT_ALL` (currently: `claude`), Ctrl+A passes through to the application instead of triggering select-all + copy. Same `/proc/<pgid>/comm` check pattern as Ctrl+W.
+
 ## Split pane mode (custom feature, WIP)
 
 Ctrl+E toggles between tabbed and split-pane view. In split mode, all tabs become simultaneously visible panes arranged in a grid layout.

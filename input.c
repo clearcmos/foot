@@ -326,6 +326,27 @@ execute_binding(struct seat *seat, struct terminal *term,
         return true;
 
     case BIND_ACTION_SELECT_ALL: {
+        pid_t fg_pgid = tcgetpgrp(term->ptmx);
+        pid_t shell_pgid = getpgid(term->slave);
+        if (fg_pgid != -1 && shell_pgid != -1 && fg_pgid != shell_pgid) {
+            static const char *passthrough[] = {"claude", NULL};
+            char comm_path[64];
+            char comm[256] = {0};
+            snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)fg_pgid);
+            FILE *f = fopen(comm_path, "r");
+            if (f != NULL) {
+                if (fgets(comm, sizeof(comm), f) != NULL) {
+                    size_t len = strlen(comm);
+                    if (len > 0 && comm[len - 1] == '\n')
+                        comm[len - 1] = '\0';
+                }
+                fclose(f);
+            }
+            for (const char **p = passthrough; *p != NULL; p++) {
+                if (strcmp(comm, *p) == 0)
+                    return false;  /* Pass through to application */
+            }
+        }
         /* Copy entire scrollback + visible content to clipboard */
         char *text = NULL;
         size_t len = 0;
