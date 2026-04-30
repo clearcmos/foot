@@ -335,7 +335,7 @@ tab_close_active(struct terminal *term)
     struct tab *closing = tb->active;
     struct terminal *closing_term = closing->term;
 
-    /* Find previous tab (left) to switch to, fall back to next (right) */
+    /* Switch to the tab on the right; if none, fall back to the left neighbor */
     struct tab *prev_tab = NULL;
     struct tab *next_tab = NULL;
     bool found = false;
@@ -351,7 +351,7 @@ tab_close_active(struct terminal *term)
         }
     }
 
-    struct tab *target = prev_tab != NULL ? prev_tab : next_tab;
+    struct tab *target = next_tab != NULL ? next_tab : prev_tab;
     xassert(target != NULL);
 
     /* Switch first */

@@ -62,7 +62,7 @@ Key implementation details:
 
 Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev), Ctrl+Shift+D (undo close). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement. F1 shows the keyboard shortcuts help card.
 
-Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab unless the process is whitelisted. The whitelist is a `passthrough` array in `input.c` `BIND_ACTION_TAB_CLOSE` handler (currently: `nano`). Process name is read from `/proc/<pgid>/comm`.
+Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab unless the process is whitelisted. The whitelist is a `passthrough` array in `input.c` `BIND_ACTION_TAB_CLOSE` handler (currently: `nano`). Process name is read from `/proc/<pgid>/comm`. After closing, focus moves to the right neighbor; if the closed tab was rightmost, focus falls back to the left neighbor.
 
 Ctrl+A select-all behavior: when a subprocess is running whose name matches the passthrough list in `BIND_ACTION_SELECT_ALL` (currently: `claude`), Ctrl+A passes through to the application instead of triggering select-all + copy. Same `/proc/<pgid>/comm` check pattern as Ctrl+W.
 
