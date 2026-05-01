@@ -532,6 +532,12 @@ bool wayl_reload_xcursor_theme(struct seat *seat, float new_scale);
 void wayl_flush(struct wayland *wayl);
 void wayl_roundtrip(struct wayland *wayl);
 
+/* Non-blocking: dispatch any wayland input that's already on the socket.
+ * Used by long-running callbacks (e.g. PTY drain on a busy tab) to keep
+ * clicks/keys responsive without waiting for the next epoll cycle.
+ * Returns true if any events were read+dispatched. */
+bool wayl_dispatch_input_now(struct wayland *wayl);
+
 bool wayl_fractional_scaling(const struct wayland *wayl);
 void wayl_surface_scale(
     const struct wl_window *win, const struct wayl_surface *surf,

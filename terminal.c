@@ -293,6 +293,26 @@ fdm_ptmx(struct fdm *fdm, int fd, int events, void *data)
 
         xassert(term->interactive_resizing.grid == NULL);
         vt_from_slave(term, buf, count);
+
+        /*
+         * Keep input responsive while a busy tab streams output (e.g. an
+         * AI session with heavy escape sequences). Without this peek, a
+         * single fdm_ptmx invocation can spend many milliseconds parsing
+         * before returning to epoll, making tab-switch input feel laggy.
+         *
+         * If a wayland event was dispatched, yield to the FDM loop so any
+         * resulting render (e.g. for a tab switch triggered by Shift+Arrow)
+         * runs before we continue draining this PTY. The remaining PTY data
+         * will be picked up on the next epoll cycle.
+         *
+         * If the dispatch closed our PTY (e.g. the user closed this tab),
+         * bail out before the next read() to avoid touching a dead fd.
+         */
+        if (wayl_dispatch_input_now(term->wl)) {
+            if (term->ptmx < 0)
+                return true;
+            break;
+        }
     }
 
     if (!term->render.app_sync_updates.enabled) {

@@ -2402,6 +2402,43 @@ wayl_flush(struct wayland *wayl)
     }
 }
 
+bool
+wayl_dispatch_input_now(struct wayland *wayl)
+{
+    /* Push any pending writes so the compositor isn't stalled and so
+     * frame-callback acks land before we look at input. */
+    wayl_flush(wayl);
+
+    /* Non-blocking peek: is there anything on the socket right now? */
+    struct pollfd pfd = {.fd = wayl->fd, .events = POLLIN};
+    int r = poll(&pfd, 1, 0);
+    if (r <= 0 || !(pfd.revents & POLLIN))
+        return false;
+
+    /* prepare_read() was set up by the previous fdm_wayl invocation (or
+     * by wayl_init()), so we can read events directly. */
+    if (wl_display_read_events(wayl->display) < 0) {
+        LOG_ERRNO("failed to read wayland events");
+        return false;
+    }
+
+    if (wl_display_dispatch_pending(wayl->display) < 0) {
+        LOG_ERRNO("failed to dispatch pending wayland events");
+        return false;
+    }
+
+    /* Re-prepare for the next caller (fdm_wayl or another nested
+     * dispatch). Standard libwayland dance. */
+    while (wl_display_prepare_read(wayl->display) != 0) {
+        if (wl_display_dispatch_pending(wayl->display) < 0) {
+            LOG_ERRNO("failed to dispatch pending wayland events");
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void
 wayl_roundtrip(struct wayland *wayl)
 {
