@@ -1801,6 +1801,11 @@ key_press_release(struct seat *seat, struct terminal *term, uint32_t serial,
     xassert(bindings != NULL);
 
     if (pressed) {
+        if (term->window != NULL && term->window->tab_bar.ctx_menu_visible) {
+            tab_ctx_menu_dismiss(term);
+            return;
+        }
+
         if (term->help_visible) {
             term->help_visible = false;
             render_overlay(term);
@@ -2890,6 +2895,14 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
     seat->mouse.x = x;
     seat->mouse.y = y;
 
+    /* Right-click context menu: track hover regardless of which surface
+     * the pointer is currently over. */
+    if (term->window->tab_bar.ctx_menu_visible) {
+        tab_ctx_menu_update_hover(term, seat->mouse.x, seat->mouse.y);
+        term_xcursor_update_for_seat(term, seat);
+        return;
+    }
+
     term_xcursor_update_for_seat(term, seat);
 
     if (tll_length(seat->mouse.buttons) > 0) {
@@ -3191,6 +3204,16 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
 
     xassert(term != NULL);
 
+    /* Right-click context menu: any button while it's open is a menu
+     * click (action or dismiss). Consume both press and release so the
+     * release of the right-click that opened the menu doesn't fall
+     * through and immediately dismiss it. */
+    if (term->window->tab_bar.ctx_menu_visible) {
+        if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+            tab_ctx_menu_handle_click(term, seat->mouse.x, seat->mouse.y);
+        return;
+    }
+
     enum term_surface surf_kind = TERM_SURF_NONE;
     bool send_to_client = false;
 
@@ -3486,6 +3509,22 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
                     }
                 }
                 tab_switch_to(win, clicked_tab);
+            }
+        } else if (button == BTN_RIGHT &&
+                   state == WL_POINTER_BUTTON_STATE_PRESSED)
+        {
+            struct wl_window *win = term->window;
+            struct tab_bar *tb = &win->tab_bar;
+            if (tb->tab_count > 1 && tb->tab_x_ends != NULL) {
+                int clicked_tab = tb->tab_count - 1;
+                for (int i = 0; i < tb->tab_count; i++) {
+                    if (seat->mouse.x < tb->tab_x_ends[i]) {
+                        clicked_tab = i;
+                        break;
+                    }
+                }
+                tab_ctx_menu_show(term, clicked_tab,
+                                  seat->mouse.x, seat->mouse.y);
             }
         }
         break;

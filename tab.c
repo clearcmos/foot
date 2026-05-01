@@ -322,40 +322,38 @@ tab_new(struct terminal *term)
     return true;
 }
 
-bool
-tab_close_active(struct terminal *term)
+static bool
+tab_close_internal(struct wl_window *win, struct tab *closing)
 {
-    struct wl_window *win = term->window;
     struct tab_bar *tb = &win->tab_bar;
 
     if (tb->tab_count <= 1)
         return false;  /* Last tab - caller should close window */
 
-    /* Find the active tab in the list */
-    struct tab *closing = tb->active;
     struct terminal *closing_term = closing->term;
 
-    /* Switch to the tab on the right; if none, fall back to the left neighbor */
-    struct tab *prev_tab = NULL;
-    struct tab *next_tab = NULL;
-    bool found = false;
-    tll_foreach(tb->tabs, it) {
-        if (&it->item == closing) {
-            found = true;
-            continue;
+    /* If we're closing the active tab, switch focus first. Pick the right
+     * neighbor; if the closed tab was rightmost, fall back to the left. */
+    if (closing == tb->active) {
+        struct tab *prev_tab = NULL;
+        struct tab *next_tab = NULL;
+        bool found = false;
+        tll_foreach(tb->tabs, it) {
+            if (&it->item == closing) {
+                found = true;
+                continue;
+            }
+            if (!found) {
+                prev_tab = &it->item;
+            } else if (next_tab == NULL) {
+                next_tab = &it->item;
+            }
         }
-        if (!found) {
-            prev_tab = &it->item;
-        } else if (next_tab == NULL) {
-            next_tab = &it->item;
-        }
+
+        struct tab *target = next_tab != NULL ? next_tab : prev_tab;
+        xassert(target != NULL);
+        do_tab_switch(win, target);
     }
-
-    struct tab *target = next_tab != NULL ? next_tab : prev_tab;
-    xassert(target != NULL);
-
-    /* Switch first */
-    do_tab_switch(win, target);
 
     /*
      * Kill the shell and clean up FDs manually, but keep the terminal
@@ -459,6 +457,151 @@ tab_close_active(struct terminal *term)
     }
 
     LOG_INFO("tab closed (remaining: %d)", tb->tab_count);
+    return true;
+}
+
+bool
+tab_close_active(struct terminal *term)
+{
+    return tab_close_internal(term->window, term->window->tab_bar.active);
+}
+
+bool
+tab_close_at_index(struct wl_window *win, int index)
+{
+    struct tab_bar *tb = &win->tab_bar;
+    if (index < 0 || index >= tb->tab_count)
+        return false;
+
+    int i = 0;
+    tll_foreach(tb->tabs, it) {
+        if (i++ == index)
+            return tab_close_internal(win, &it->item);
+    }
+    return false;
+}
+
+void
+tab_ctx_menu_show(struct terminal *term, int target_tab, int x, int y)
+{
+    struct tab_bar *tb = &term->window->tab_bar;
+    if (target_tab < 0 || target_tab >= tb->tab_count)
+        return;
+
+    tb->ctx_menu_visible = true;
+    tb->ctx_menu_target_tab = target_tab;
+    tb->ctx_menu_x = x;
+    tb->ctx_menu_y = y;
+    tb->ctx_menu_hovered_item = -1;
+    tb->ctx_menu_item_count = 2;  /* Close Tab, Duplicate Tab */
+    tb->ctx_menu_w = 0;           /* recomputed at render time */
+    tb->ctx_menu_h = 0;
+    render_refresh(term);
+}
+
+void
+tab_ctx_menu_dismiss(struct terminal *term)
+{
+    struct wl_window *win = term->window;
+    struct tab_bar *tb = &win->tab_bar;
+    if (!tb->ctx_menu_visible)
+        return;
+    tb->ctx_menu_visible = false;
+    tb->ctx_menu_hovered_item = -1;
+
+    /*
+     * Eagerly unmap the overlay subsurface so the menu disappears even
+     * when the next render targets a different term. This matters for
+     * the action items: "Close Tab" and "Duplicate Tab" both switch
+     * focus, and the new active term's `render.last_overlay_style` is
+     * usually OVERLAY_NONE, so its render_overlay() wouldn't know to
+     * unmap. Without this, stale menu pixels remain on the overlay.
+     */
+    if (win->overlay.surface.surf != NULL) {
+        wl_surface_attach(win->overlay.surface.surf, NULL, 0, 0);
+        wl_surface_commit(win->overlay.surface.surf);
+        term->render.last_overlay_style = OVERLAY_NONE;
+        term->render.last_overlay_buf = NULL;
+    }
+
+    render_refresh(term);
+}
+
+bool
+tab_ctx_menu_update_hover(struct terminal *term, int x, int y)
+{
+    struct tab_bar *tb = &term->window->tab_bar;
+    if (!tb->ctx_menu_visible || tb->ctx_menu_w == 0 || tb->ctx_menu_h == 0)
+        return false;
+
+    int hovered = -1;
+    if (x >= tb->ctx_menu_x && x < tb->ctx_menu_x + tb->ctx_menu_w &&
+        y >= tb->ctx_menu_y && y < tb->ctx_menu_y + tb->ctx_menu_h)
+    {
+        int item_h = tb->ctx_menu_h / tb->ctx_menu_item_count;
+        if (item_h > 0)
+            hovered = (y - tb->ctx_menu_y) / item_h;
+        if (hovered >= tb->ctx_menu_item_count)
+            hovered = tb->ctx_menu_item_count - 1;
+    }
+
+    if (hovered != tb->ctx_menu_hovered_item) {
+        tb->ctx_menu_hovered_item = hovered;
+        render_refresh(term);
+        return true;
+    }
+    return false;
+}
+
+bool
+tab_ctx_menu_handle_click(struct terminal *term, int x, int y)
+{
+    struct tab_bar *tb = &term->window->tab_bar;
+    if (!tb->ctx_menu_visible)
+        return false;
+
+    /* Click outside the menu rect: dismiss without action */
+    bool inside =
+        tb->ctx_menu_w > 0 && tb->ctx_menu_h > 0 &&
+        x >= tb->ctx_menu_x && x < tb->ctx_menu_x + tb->ctx_menu_w &&
+        y >= tb->ctx_menu_y && y < tb->ctx_menu_y + tb->ctx_menu_h;
+
+    if (!inside) {
+        tab_ctx_menu_dismiss(term);
+        return true;
+    }
+
+    int item_h = tb->ctx_menu_h / tb->ctx_menu_item_count;
+    int item = item_h > 0 ? (y - tb->ctx_menu_y) / item_h : 0;
+    if (item < 0) item = 0;
+    if (item >= tb->ctx_menu_item_count) item = tb->ctx_menu_item_count - 1;
+
+    int target_tab = tb->ctx_menu_target_tab;
+    struct wl_window *win = term->window;
+
+    /* Resolve the target tab's terminal BEFORE dismissing/closing, since
+     * tab indices may shift after a close. */
+    struct terminal *target_term = NULL;
+    int i = 0;
+    tll_foreach(tb->tabs, it) {
+        if (i++ == target_tab) {
+            target_term = it->item.term;
+            break;
+        }
+    }
+
+    tab_ctx_menu_dismiss(term);
+
+    switch (item) {
+    case 0:  /* Close Tab */
+        tab_close_at_index(win, target_tab);
+        break;
+    case 1:  /* Duplicate Tab */
+        if (target_term != NULL)
+            tab_new(target_term);
+        break;
+    }
+
     return true;
 }
 

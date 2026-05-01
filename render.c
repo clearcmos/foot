@@ -1971,10 +1971,14 @@ render_overlay_single_pixel(struct terminal *term, enum overlay_style style,
 
     quirk_weston_subsurface_desync_on(overlay->sub);
 
-    /* In split mode, pane subsurfaces stack above the overlay.
-     * Place overlay on top so it's visible over the pane content. */
+    /* The tab bar subsurface is created later than the overlay so it
+     * stacks on top by default. Lift the overlay above it (and above
+     * panes in split mode) so overlays are always visible. */
     if (term->window->tab_bar.split_mode)
         wl_subsurface_place_above(overlay->sub, term->window->surface.surf);
+    else if (term->window->tab_bar.surface != NULL)
+        wl_subsurface_place_above(
+            overlay->sub, term->window->tab_bar.surface->surface.surf);
 
     if (style != term->render.last_overlay_style) {
         buf = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
@@ -2030,6 +2034,7 @@ render_overlay(struct terminal *term)
     const enum overlay_style style =
         term->is_searching ? OVERLAY_SEARCH :
         term->help_visible ? OVERLAY_HELP :
+        term->window->tab_bar.ctx_menu_visible ? OVERLAY_TAB_MENU :
         term->flash.active ? OVERLAY_FLASH :
         unicode_mode_active ? OVERLAY_UNICODE_MODE :
         OVERLAY_NONE;
@@ -2062,6 +2067,11 @@ render_overlay(struct terminal *term)
 
     case OVERLAY_HELP:
         color = (pixman_color_t){0, 0, 0, 0xbfff};
+        break;
+
+    case OVERLAY_TAB_MENU:
+        /* Fully transparent backdrop; only the menu rectangle is opaque */
+        color = (pixman_color_t){0, 0, 0, 0};
         break;
 
     case OVERLAY_NONE:
@@ -2487,10 +2497,127 @@ render_overlay(struct terminal *term)
                 card_w - pad * 2, 1});
     }
 
+    /* Render right-click context menu near the click anchor. Items are
+     * stacked vertically; hovered item gets a highlight. */
+    if (style == OVERLAY_TAB_MENU && term->fonts[0] != NULL) {
+        const bool gc = wayl_do_linear_blending(term->wl, term->conf);
+        struct fcft_font *font = term->fonts[0];
+        struct tab_bar *tb = &term->window->tab_bar;
+
+        static const char *const items[] = {"Close Tab", "Duplicate Tab"};
+        const int item_count = sizeof(items) / sizeof(items[0]);
+
+        int font_height = max(font->height, font->ascent + font->descent);
+        int item_h = font_height + font_height / 2;
+        int pad_x = font->max_advance.x;
+
+        int max_text_w = 0;
+        for (int i = 0; i < item_count; i++) {
+            int w = 0;
+            char32_t *m32 = ambstoc32(items[i]);
+            if (m32 != NULL) {
+                for (const char32_t *c = m32; *c; c++) {
+                    const struct fcft_glyph *g = fcft_rasterize_char_utf32(
+                        font, *c, term->font_subpixel);
+                    if (g) w += g->advance.x;
+                }
+                free(m32);
+            }
+            if (w > max_text_w) max_text_w = w;
+        }
+
+        int menu_w = max_text_w + pad_x * 3;
+        int menu_h = item_h * item_count;
+        int menu_x = tb->ctx_menu_x;
+        int menu_y = tb->ctx_menu_y;
+
+        /* Clamp inside window */
+        if (menu_x + menu_w > term->width) menu_x = term->width - menu_w;
+        if (menu_y + menu_h > term->height) menu_y = term->height - menu_h;
+        if (menu_x < 0) menu_x = 0;
+        if (menu_y < 0) menu_y = 0;
+
+        /* Persist computed geometry for hit-testing */
+        tb->ctx_menu_x = menu_x;
+        tb->ctx_menu_y = menu_y;
+        tb->ctx_menu_w = menu_w;
+        tb->ctx_menu_h = menu_h;
+        tb->ctx_menu_item_count = item_count;
+
+        /* Background */
+        pixman_color_t menu_bg = color_hex_to_pixman_with_alpha(
+            0xff1a1a2e, 0xffff, gc);
+        pixman_image_fill_rectangles(
+            PIXMAN_OP_OVER, buf->pix[0], &menu_bg, 1,
+            &(pixman_rectangle16_t){menu_x, menu_y, menu_w, menu_h});
+
+        /* Border */
+        pixman_color_t border_color = color_hex_to_pixman_with_alpha(
+            0xff444466, 0xffff, gc);
+        int bw = 1;
+        pixman_rectangle16_t borders[] = {
+            {menu_x, menu_y, menu_w, bw},
+            {menu_x, menu_y + menu_h - bw, menu_w, bw},
+            {menu_x, menu_y, bw, menu_h},
+            {menu_x + menu_w - bw, menu_y, bw, menu_h},
+        };
+        pixman_image_fill_rectangles(
+            PIXMAN_OP_OVER, buf->pix[0], &border_color, 4, borders);
+
+        /* Hover highlight */
+        if (tb->ctx_menu_hovered_item >= 0 &&
+            tb->ctx_menu_hovered_item < item_count)
+        {
+            pixman_color_t hover_bg = color_hex_to_pixman_with_alpha(
+                0xff3a3a5e, 0xffff, gc);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_OVER, buf->pix[0], &hover_bg, 1,
+                &(pixman_rectangle16_t){
+                    menu_x + bw,
+                    menu_y + tb->ctx_menu_hovered_item * item_h + bw,
+                    menu_w - bw * 2,
+                    item_h - (tb->ctx_menu_hovered_item == item_count - 1
+                              ? bw * 2 : 0)});
+        }
+
+        /* Item text */
+        pixman_color_t text_color = color_hex_to_pixman(0xffeeeeee, gc);
+        pixman_image_t *src = pixman_image_create_solid_fill(&text_color);
+        for (int i = 0; i < item_count; i++) {
+            int baseline = menu_y + i * item_h
+                + (item_h - font_height) / 2 + font->ascent;
+            int x = menu_x + pad_x + pad_x / 2;
+            char32_t *m32 = ambstoc32(items[i]);
+            if (m32 == NULL) continue;
+            for (const char32_t *c = m32; *c; c++) {
+                const struct fcft_glyph *g = fcft_rasterize_char_utf32(
+                    font, *c, term->font_subpixel);
+                if (g == NULL) continue;
+                if (pixman_image_get_format(g->pix) == PIXMAN_a8r8g8b8) {
+                    pixman_image_composite32(
+                        PIXMAN_OP_OVER, g->pix, NULL, buf->pix[0],
+                        0, 0, 0, 0, x + g->x, baseline - g->y,
+                        g->width, g->height);
+                } else {
+                    pixman_image_composite32(
+                        PIXMAN_OP_OVER, src, g->pix, buf->pix[0],
+                        0, 0, 0, 0, x + g->x, baseline - g->y,
+                        g->width, g->height);
+                }
+                x += g->advance.x;
+            }
+            free(m32);
+        }
+        pixman_image_unref(src);
+    }
+
     quirk_weston_subsurface_desync_on(overlay->sub);
 
     if (term->window->tab_bar.split_mode)
         wl_subsurface_place_above(overlay->sub, term->window->surface.surf);
+    else if (term->window->tab_bar.surface != NULL)
+        wl_subsurface_place_above(
+            overlay->sub, term->window->tab_bar.surface->surface.surf);
 
     wayl_surface_scale(
         term->window, &overlay->surface, buf, term->scale);

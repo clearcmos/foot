@@ -66,6 +66,8 @@ Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab
 
 Ctrl+A select-all behavior: when a subprocess is running whose name matches the passthrough list in `BIND_ACTION_SELECT_ALL` (currently: `claude`), Ctrl+A passes through to the application instead of triggering select-all + copy. Same `/proc/<pgid>/comm` check pattern as Ctrl+W.
 
+Right-click context menu on tab bar: right-clicking a tab opens a small menu with `Close Tab` and `Duplicate Tab`. State (`ctx_menu_*`) lives on `tab_bar`. Rendered via `OVERLAY_TAB_MENU` in `render_overlay()` at the click anchor (clamped to window bounds). While the menu is open, `wl_pointer_button` and `wl_pointer_motion` short-circuit through `tab_ctx_menu_handle_click()` and `tab_ctx_menu_update_hover()` regardless of which surface the pointer is over (overlay subsurface has empty input region, so events land on the underlying grid/tab-bar surface). Any keypress dismisses (handled in `key_press_release()` before the help-overlay check). `tab_close_at_index()` and `tab_new(target_term)` implement the actions; `tab_close_active()` is now a thin wrapper around the shared `tab_close_internal()` so non-active-tab closes work too.
+
 ## Split pane mode (custom feature, WIP)
 
 Ctrl+E toggles between tabbed and split-pane view. In split mode, all tabs become simultaneously visible panes arranged in a grid layout.

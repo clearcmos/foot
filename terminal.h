@@ -379,6 +379,7 @@ enum overlay_style {
     OVERLAY_FLASH,
     OVERLAY_UNICODE_MODE,
     OVERLAY_HELP,
+    OVERLAY_TAB_MENU,
 };
 
 typedef tll(struct ptmx_buffer) ptmx_buffer_list_t;

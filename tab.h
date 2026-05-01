@@ -54,6 +54,14 @@ struct tab_bar {
     int split_rows;              /* number of rows in split grid */
     int *tab_x_ends;             /* cumulative x end positions for hit-testing */
     bool dirty;
+
+    /* Right-click context menu */
+    bool ctx_menu_visible;
+    int ctx_menu_target_tab;     /* tab index the menu was opened on */
+    int ctx_menu_x, ctx_menu_y;  /* top-left anchor in window pixels */
+    int ctx_menu_w, ctx_menu_h;  /* size, computed at render time */
+    int ctx_menu_hovered_item;   /* 0..ctx_menu_item_count-1, or -1 */
+    int ctx_menu_item_count;     /* number of items in the menu */
 };
 
 void tab_bar_init(struct tab_bar *tb, int undo_timeout_ms);
@@ -67,6 +75,19 @@ bool tab_new(struct terminal *term);
 
 /* Close the active tab. Returns false if it was the last tab. */
 bool tab_close_active(struct terminal *term);
+
+/* Close a specific tab by index. Returns false if the index is invalid or
+ * if it was the last tab. */
+bool tab_close_at_index(struct wl_window *win, int index);
+
+/* Right-click context menu on the tab bar. */
+void tab_ctx_menu_show(struct terminal *term, int target_tab, int x, int y);
+void tab_ctx_menu_dismiss(struct terminal *term);
+/* Returns true if the click hit the menu (action taken or dismissed). */
+bool tab_ctx_menu_handle_click(struct terminal *term, int x, int y);
+/* Updates hovered item based on pointer position. Returns true if state
+ * changed and a re-render is needed. */
+bool tab_ctx_menu_update_hover(struct terminal *term, int x, int y);
 
 /* Switch to the next tab. Wraps around. */
 void tab_next(struct terminal *term);
