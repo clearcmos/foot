@@ -45,6 +45,7 @@ tab_bar_init(struct tab_bar *tb, int undo_timeout_ms)
         .split_hovered = -1,
         .tab_x_ends = NULL,
         .dirty = true,
+        .pulse_timer_fd = -1,
     };
 }
 
@@ -81,6 +82,11 @@ tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm)
     if (tb->chain != NULL) {
         shm_chain_free(tb->chain);
         tb->chain = NULL;
+    }
+
+    if (tb->pulse_timer_fd >= 0) {
+        fdm_del(fdm, tb->pulse_timer_fd);
+        tb->pulse_timer_fd = -1;
     }
 
     free(tb->tab_x_ends);
@@ -1012,4 +1018,193 @@ tab_bar_height(const struct terminal *term)
 
     /* Fixed tab bar height in pixels, scaled for monitor */
     return (int)roundf(20 * term->scale);
+}
+
+/* How long after the last PTY byte we still consider claude "working". */
+#define PULSE_QUIET_MS 700
+
+/* How often we re-check the foreground process (the /proc lookup is debounced
+ * to keep the per-byte PTY hot path cheap). */
+#define PULSE_FG_CHECK_MS 250
+
+static long
+ms_since(const struct timespec *t)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    long ds = (long)(now.tv_sec - t->tv_sec);
+    long dn = (long)(now.tv_nsec - t->tv_nsec);
+    return ds * 1000 + dn / 1000000;
+}
+
+static struct tab *
+find_tab(struct wl_window *win, const struct terminal *term)
+{
+    if (win == NULL)
+        return NULL;
+    tll_foreach(win->tab_bar.tabs, it) {
+        if (it->item.term == term)
+            return &it->item;
+    }
+    return NULL;
+}
+
+/* Update the tab's cached fg-process state by reading /proc.
+ * Returns true if the foreground process is `claude`. */
+static bool
+refresh_fg_is_claude(struct tab *tab)
+{
+    struct terminal *term = tab->term;
+    if (term->ptmx < 0 || term->slave <= 0) {
+        tab->fg_is_claude = false;
+        return false;
+    }
+
+    pid_t fg_pgid = tcgetpgrp(term->ptmx);
+    pid_t shell_pgid = getpgid(term->slave);
+
+    clock_gettime(CLOCK_MONOTONIC, &tab->last_fg_check);
+
+    if (fg_pgid <= 0 || shell_pgid <= 0 || fg_pgid == shell_pgid) {
+        tab->cached_fg_pgid = fg_pgid;
+        tab->fg_is_claude = false;
+        return false;
+    }
+
+    /* Same pgid as last check - reuse cached classification */
+    if (fg_pgid == tab->cached_fg_pgid)
+        return tab->fg_is_claude;
+
+    tab->cached_fg_pgid = fg_pgid;
+    tab->fg_is_claude = false;
+
+    char comm_path[64];
+    char comm[256] = {0};
+    snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)fg_pgid);
+    FILE *f = fopen(comm_path, "r");
+    if (f != NULL) {
+        if (fgets(comm, sizeof(comm), f) != NULL) {
+            size_t len = strlen(comm);
+            if (len > 0 && comm[len - 1] == '\n')
+                comm[len - 1] = '\0';
+            if (strcmp(comm, "claude") == 0)
+                tab->fg_is_claude = true;
+        }
+        fclose(f);
+    }
+    return tab->fg_is_claude;
+}
+
+static bool fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data);
+
+static void
+pulse_timer_arm(struct wl_window *win)
+{
+    struct tab_bar *tb = &win->tab_bar;
+    if (tb->pulse_timer_fd >= 0)
+        return;
+
+    struct terminal *any = tb->active != NULL ? tb->active->term : NULL;
+    if (any == NULL)
+        return;
+
+    int fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    if (fd < 0) {
+        LOG_ERRNO("failed to create tab pulse timer");
+        return;
+    }
+    if (!fdm_add(any->fdm, fd, EPOLLIN, &fdm_pulse_timer, win)) {
+        close(fd);
+        return;
+    }
+
+    /* ~50ms ticks - smooth pulsation without burning CPU */
+    const struct itimerspec timer = {
+        .it_value =    {.tv_sec = 0, .tv_nsec = 50 * 1000000},
+        .it_interval = {.tv_sec = 0, .tv_nsec = 50 * 1000000},
+    };
+    if (timerfd_settime(fd, 0, &timer, NULL) < 0) {
+        LOG_ERRNO("failed to arm tab pulse timer");
+        fdm_del(any->fdm, fd);
+        return;
+    }
+    tb->pulse_timer_fd = fd;
+}
+
+static void
+pulse_timer_disarm(struct wl_window *win)
+{
+    struct tab_bar *tb = &win->tab_bar;
+    if (tb->pulse_timer_fd < 0)
+        return;
+    struct terminal *any = tb->active != NULL ? tb->active->term : NULL;
+    if (any != NULL)
+        fdm_del(any->fdm, tb->pulse_timer_fd);
+    else
+        close(tb->pulse_timer_fd);
+    tb->pulse_timer_fd = -1;
+}
+
+static bool
+fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data)
+{
+    (void)fdm;
+    (void)events;
+    struct wl_window *win = data;
+    uint64_t expirations;
+    ssize_t r = read(fd, &expirations, sizeof(expirations));
+    (void)r;
+
+    /* Re-check working state and disarm if nothing is working anymore. */
+    bool any_working = false;
+    tll_foreach(win->tab_bar.tabs, it) {
+        if (tab_is_working(&it->item))
+            any_working = true;
+    }
+
+    win->tab_bar.dirty = true;
+    if (win->tab_bar.active != NULL)
+        render_refresh(win->tab_bar.active->term);
+
+    if (!any_working)
+        pulse_timer_disarm(win);
+
+    return true;
+}
+
+void
+tab_pulse_kick(struct terminal *term)
+{
+    if (term->window == NULL)
+        return;
+
+    struct tab *tab = find_tab(term->window, term);
+    if (tab == NULL)
+        return;
+
+    if (ms_since(&tab->last_fg_check) >= PULSE_FG_CHECK_MS)
+        refresh_fg_is_claude(tab);
+
+    if (tab->fg_is_claude) {
+        if (term->window->tab_bar.pulse_timer_fd < 0) {
+            term->window->tab_bar.dirty = true;
+            pulse_timer_arm(term->window);
+        }
+    }
+}
+
+bool
+tab_is_working(struct tab *tab)
+{
+    struct terminal *term = tab->term;
+    if (term == NULL || term->ptmx < 0)
+        return false;
+
+    if (ms_since(&tab->last_fg_check) >= PULSE_FG_CHECK_MS)
+        refresh_fg_is_claude(tab);
+
+    if (!tab->fg_is_claude)
+        return false;
+
+    return ms_since(&term->last_pty_activity) < PULSE_QUIET_MS;
 }

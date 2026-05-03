@@ -292,6 +292,12 @@ fdm_ptmx(struct fdm *fdm, int fd, int events, void *data)
         }
 
         xassert(term->interactive_resizing.grid == NULL);
+
+        /* Track PTY activity for tab pulsate effect */
+        clock_gettime(CLOCK_MONOTONIC, &term->last_pty_activity);
+        if (term->window != NULL && term->window->tab_bar.tab_count > 1)
+            tab_pulse_kick(term);
+
         vt_from_slave(term, buf, count);
 
         /*

@@ -3083,9 +3083,23 @@ render_tab_bar(struct terminal *term)
         }
     }
 
+    /* Compute pulse phase once per render - same phase across all tabs */
+    uint16_t pulse_alpha = 0;
+    {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        /* 1.0s period: smooth sine in [0,1] */
+        double t = (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+        double phase = sin(t * (2.0 * M_PI / 1.0));
+        /* Map [-1,1] -> [0.30, 0.85] for the overlay alpha */
+        double a = 0.575 + 0.275 * phase;
+        pulse_alpha = (uint16_t)(a * 0xffff);
+    }
+
     tll_foreach(tb->tabs, it) {
         bool is_active = (&it->item == tb->active);
         bool is_hovered = (idx == tb->hovered_tab && !is_active);
+        bool is_working = tab_is_working(&it->item);
         const int tab_width = tab_widths[idx];
 
         /* Tab background */
@@ -3108,6 +3122,18 @@ render_tab_bar(struct terminal *term)
             pixman_image_fill_rectangles(
                 PIXMAN_OP_OVER, buf->pix[0], &hover_bg, 1,
                 &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
+        }
+
+        /* Pulsating console-green overlay when claude is working */
+        if (is_working) {
+            const uint32_t green = 0xff00cc33;  /* console green */
+            pixman_color_t pulse = color_hex_to_pixman_with_alpha(
+                green, pulse_alpha, gamma_correct);
+            pixman_image_fill_rectangles(
+                PIXMAN_OP_OVER, buf->pix[0], &pulse, 1,
+                &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
+            /* Black text on the green pulse for legibility */
+            tab_fg = 0xff000000;
         }
 
         /* Tab label text */

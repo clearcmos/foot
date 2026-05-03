@@ -857,6 +857,9 @@ struct terminal {
 
     bool grapheme_shaping;
     bool size_notifications;
+
+    /* Tab activity tracking for claude-working pulsate effect */
+    struct timespec last_pty_activity;
 };
 
 struct config;

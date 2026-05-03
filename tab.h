@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdbool.h>
+#include <time.h>
+#include <sys/types.h>
 #include <tllist.h>
 
 struct terminal;
@@ -21,6 +23,11 @@ struct tab {
     struct wl_callback *pane_frame_cb;  /* per-pane frame callback in split mode */
     int pane_col;                       /* column in split grid */
     int pane_row;                       /* row in split grid */
+
+    /* Cached foreground process info for claude pulsate effect */
+    pid_t cached_fg_pgid;
+    bool fg_is_claude;
+    struct timespec last_fg_check;
 };
 
 struct closed_tab {
@@ -54,6 +61,9 @@ struct tab_bar {
     int split_rows;              /* number of rows in split grid */
     int *tab_x_ends;             /* cumulative x end positions for hit-testing */
     bool dirty;
+
+    /* Pulsate timer for claude-working tabs (-1 when idle) */
+    int pulse_timer_fd;
 
     /* Right-click context menu */
     bool ctx_menu_visible;
@@ -129,3 +139,13 @@ struct wl_callback **tab_pane_frame_cb(struct wl_window *win,
 
 /* Get the tab bar height in pixels (0 if hidden). */
 int tab_bar_height(const struct terminal *term);
+
+/* Called from PTY read path when a terminal produces output. Re-checks
+ * (with debounce) whether the terminal's foreground process is `claude`,
+ * and arms the tab-bar pulse timer if so. Cheap when not-claude. */
+void tab_pulse_kick(struct terminal *term);
+
+/* Returns true if the tab's foreground process is `claude` and there has
+ * been recent PTY output (i.e. claude is actively working). Updates the
+ * cached foreground-process info on the tab as a side effect. */
+bool tab_is_working(struct tab *tab);
