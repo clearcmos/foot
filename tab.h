@@ -83,6 +83,12 @@ void tab_bar_add_initial(struct tab_bar *tb, struct terminal *term);
 /* Create a new tab in the same window */
 bool tab_new(struct terminal *term);
 
+/* Attach an already-created terminal to a window as a new tab. The terminal
+ * must have been created via term_init() with `existing_window` set to `win`.
+ * Handles tab list insertion, tab bar subsurface/chain creation, sizing of
+ * the new and existing tabs, and switching focus to the new tab. */
+void tab_attach(struct wl_window *win, struct terminal *new_term);
+
 /* Close the active tab. Returns false if it was the last tab. */
 bool tab_close_active(struct terminal *term);
 

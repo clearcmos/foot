@@ -234,43 +234,14 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
     LOG_DBG("switched to tab %d", tab_index_of(win, new_term));
 }
 
-bool
-tab_new(struct terminal *term)
+void
+tab_attach(struct wl_window *win, struct terminal *new_term)
 {
-    struct wl_window *win = term->window;
-    struct wayland *wayl = term->wl;
-    const struct config *conf = term->conf;
+    struct wayland *wayl = new_term->wl;
 
     /* Exit split mode before adding a new tab */
     if (win->tab_bar.split_mode)
         tab_split_exit(win);
-
-    /* Read the shell's actual cwd from /proc, falling back to term->cwd */
-    char proc_path[64];
-    char cwd_buf[PATH_MAX];
-    const char *cwd = term->cwd;
-    if (term->slave > 0) {
-        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
-        ssize_t len = readlink(proc_path, cwd_buf, sizeof(cwd_buf) - 1);
-        if (len > 0) {
-            cwd_buf[len] = '\0';
-            cwd = cwd_buf;
-        }
-    }
-
-    struct terminal *new_term = term_init(
-        conf, term->fdm, term->reaper, wayl,
-        term->foot_exe, cwd,
-        NULL,  /* token */
-        NULL,  /* pty_path */
-        0, NULL, NULL,  /* argc, argv, envp - use defaults from conf */
-        term->shutdown.cb, term->shutdown.cb_data,
-        win);  /* reuse existing window */
-
-    if (new_term == NULL) {
-        LOG_ERR("failed to create new terminal for tab");
-        return false;
-    }
 
     /* Add to tab list */
     tll_push_back(win->tab_bar.tabs, ((struct tab){
@@ -306,9 +277,11 @@ tab_new(struct terminal *term)
      */
     term_window_configured(new_term);
 
-    /* render_resize expects logical (pre-scale) dimensions */
-    int logical_width = (int)roundf(term->width / term->scale);
-    int logical_height = (int)roundf(term->height / term->scale);
+    /* Use the currently-active terminal of the window as the size reference. */
+    struct terminal *reference = win->tab_bar.active != NULL
+        ? win->tab_bar.active->term : new_term;
+    int logical_width = (int)roundf(reference->width / reference->scale);
+    int logical_height = (int)roundf(reference->height / reference->scale);
     render_resize(new_term, logical_width, logical_height, RESIZE_FORCE);
 
     /* Resize all existing tabs to account for the (possibly new) tab bar */
@@ -324,7 +297,44 @@ tab_new(struct terminal *term)
     /* Switch to the new tab */
     do_tab_switch(win, &tll_back(win->tab_bar.tabs));
 
-    LOG_INFO("new tab created (total: %d)", win->tab_bar.tab_count);
+    LOG_INFO("new tab attached (total: %d)", win->tab_bar.tab_count);
+}
+
+bool
+tab_new(struct terminal *term)
+{
+    struct wl_window *win = term->window;
+    struct wayland *wayl = term->wl;
+    const struct config *conf = term->conf;
+
+    /* Read the shell's actual cwd from /proc, falling back to term->cwd */
+    char proc_path[64];
+    char cwd_buf[PATH_MAX];
+    const char *cwd = term->cwd;
+    if (term->slave > 0) {
+        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
+        ssize_t len = readlink(proc_path, cwd_buf, sizeof(cwd_buf) - 1);
+        if (len > 0) {
+            cwd_buf[len] = '\0';
+            cwd = cwd_buf;
+        }
+    }
+
+    struct terminal *new_term = term_init(
+        conf, term->fdm, term->reaper, wayl,
+        term->foot_exe, cwd,
+        NULL,  /* token */
+        NULL,  /* pty_path */
+        0, NULL, NULL,  /* argc, argv, envp - use defaults from conf */
+        term->shutdown.cb, term->shutdown.cb_data,
+        win);  /* reuse existing window */
+
+    if (new_term == NULL) {
+        LOG_ERR("failed to create new terminal for tab");
+        return false;
+    }
+
+    tab_attach(win, new_term);
     return true;
 }
 

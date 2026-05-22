@@ -87,6 +87,7 @@ print_usage(const char *prog_name)
         "  -s,--server-socket=PATH                  path to the server UNIX domain socket (default=$XDG_RUNTIME_DIR/foot-$WAYLAND_DISPLAY.sock)\n"
         "  -H,--hold                                remain open after child process exits\n"
         "  -N,--no-wait                             detach the client process from the running terminal, exiting immediately\n"
+        "  -b,--tab                                 open a new tab in an existing foot window instead of creating a new window\n"
         "  -o,--override=[section.]key=value        override configuration option\n"
         "  -E, --client-environment                 exec shell using footclient's environment, instead of the server's\n"
         "  -d,--log-level={info|warning|error|none} log level (warning)\n"
@@ -167,6 +168,7 @@ main(int argc, char *const *argv)
         {"server-socket",      required_argument, NULL, 's'},
         {"hold",               no_argument,       NULL, 'H'},
         {"no-wait",            no_argument,       NULL, 'N'},
+        {"tab",                no_argument,       NULL, 'b'},
         {"override",           required_argument, NULL, 'o'},
         {"client-environment", no_argument,       NULL, 'E'},
         {"log-level",          required_argument, NULL, 'd'},
@@ -185,6 +187,7 @@ main(int argc, char *const *argv)
 
     /* Used to format overrides */
     bool no_wait = false;
+    bool as_tab = false;
 
     /* For XDG activation */
     const char *token = getenv("XDG_ACTIVATION_TOKEN");
@@ -204,7 +207,7 @@ main(int argc, char *const *argv)
     string_list_t envp = tll_init();
 
     while (true) {
-        int c = getopt_long(argc, argv, "+t:T:a:w:W:mFLD:s:HNo:Ed:l::veh", longopts, NULL);
+        int c = getopt_long(argc, argv, "+t:T:a:w:W:mFLD:s:HNbo:Ed:l::veh", longopts, NULL);
         if (c == -1)
             break;
 
@@ -294,6 +297,10 @@ main(int argc, char *const *argv)
 
         case 'N':
             no_wait = true;
+            break;
+
+        case 'b':
+            as_tab = true;
             break;
 
         case 'o':
@@ -455,6 +462,7 @@ main(int argc, char *const *argv)
         .hold = hold,
         .no_wait = no_wait,
         .xdga_token = xdga_token,
+        .as_tab = as_tab,
         .token_len = token_len,
         .cwd_len = cwd_len,
         .override_count = override_count,

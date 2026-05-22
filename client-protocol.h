@@ -13,7 +13,8 @@ struct client_data {
     bool hold:1;
     bool no_wait:1;
     bool xdga_token:1;
-    uint8_t reserved:5;
+    bool as_tab:1;
+    uint8_t reserved:4;
 
     uint8_t token_len;
     uint16_t cwd_len;

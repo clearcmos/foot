@@ -19,6 +19,7 @@
 #include "log.h"
 
 #include "client-protocol.h"
+#include "tab.h"
 #include "terminal.h"
 #include "util.h"
 #include "wayland.h"
@@ -388,11 +389,32 @@ fdm_client(struct fdm *fdm, int fd, int events, void *data)
         .conf = conf,
     };
 
+    /*
+     * If the client requested a new tab, find a target window: prefer the
+     * window whose terminal currently has keyboard focus on some seat,
+     * fall back to the front of wayl->terms, fall back to NULL (which makes
+     * term_init create a new window - i.e. degrade gracefully when no foot
+     * window is open yet).
+     */
+    struct wl_window *target_window = NULL;
+    if (cdata.as_tab) {
+        tll_foreach(server->wayl->seats, sit) {
+            if (sit->item.kbd_focus != NULL &&
+                sit->item.kbd_focus->window != NULL)
+            {
+                target_window = sit->item.kbd_focus->window;
+                break;
+            }
+        }
+        if (target_window == NULL && tll_length(server->wayl->terms) > 0)
+            target_window = tll_front(server->wayl->terms)->window;
+    }
+
     instance->terminal = term_init(
         conf != NULL ? conf : server->conf,
         server->fdm, server->reaper, server->wayl, "footclient", cwd, token,
         NULL, cdata.argc, argv, (const char *const *)envp,
-        &term_shutdown_handler, instance, NULL);
+        &term_shutdown_handler, instance, target_window);
 
     if (instance->terminal == NULL) {
         LOG_ERR("failed to instantiate new terminal");
@@ -400,6 +422,15 @@ fdm_client(struct fdm *fdm, int fd, int events, void *data)
         instance_destroy(instance, -1);
         goto shutdown;
     }
+
+    /*
+     * For an --tab request that found a target window, term_init() already
+     * attached the new terminal to the existing wl_window. We still need to
+     * run the tab-bar bookkeeping (push to tabs list, create subsurface and
+     * chain if needed, resize, focus).
+     */
+    if (target_window != NULL)
+        tab_attach(target_window, instance->terminal);
 
     if (cdata.no_wait) {
         // the server owns the instance
