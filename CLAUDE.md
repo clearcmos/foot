@@ -97,6 +97,10 @@ Key implementation details:
 
 F1 toggles a keyboard shortcuts help card rendered as an `OVERLAY_HELP` overlay in `render_overlay()` in `render.c`. The card uses a two-column layout (key + description) with fixed pixel column positions for alignment. State is tracked via `term->help_visible` in `terminal.h`. Any keypress dismisses the overlay (handled in `key_press_release()` in `input.c` before normal binding dispatch). The `BIND_ACTION_SHOW_HELP` action is defined in `key-binding.h` with default F1 binding in `config.c`.
 
+## Bell command ${pty} template (custom feature)
+
+The `[bell]` command in foot.ini supports a `${pty}` template variable that expands to the ringing terminal's pty device (e.g. `/dev/pts/5`). Expansion happens in `term_bell()` in `terminal.c` via `spawn_expand_template()` with `ptsname(term->ptmx)`; the expanded argv is freed after spawning. The command still only runs when the ringing tab is unfocused (`command-focused=no`), so per-tab focus semantics are unchanged. Consumed by the claude-announce pipeline in `~/arch`: the Claude Code Stop hook pre-generates a spoken TTS summary wav keyed by pty under `$XDG_RUNTIME_DIR/claude-announce/`, and foot's bell command (`claude-bell-play ${pty}`) plays and deletes it, falling back to a ding when no wav is pending. Configs without `${pty}` keep working (the template expands to the argv unchanged).
+
 ## Build Options
 
 Key meson options: `ime` (IME support), `grapheme-clustering` (Unicode via libutf8proc), `tests`, `terminfo`, `docs`. See `meson_options.txt` for the full list.

@@ -2,6 +2,19 @@
 
 The fast, lightweight and minimalistic Wayland terminal emulator.
 
+## Personal fork
+
+This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom modifications:
+
+- Multi-tab support: tab bar, per-tab cwd titles, close with undo, right-click context menu, `footclient --tab`
+- Split pane mode (Ctrl+E): all tabs shown as simultaneously visible panes
+- Keyboard shortcuts help overlay (F1)
+- Mouse extras: URL underline on hover, Ctrl+Click to open URLs, right-click copies the active selection
+- `${pty}` template variable in the `[bell]` command, for per-tab external notification scripts
+- Custom default keybindings (Ctrl+T, Ctrl+W, Ctrl+Tab, and more)
+
+See CLAUDE.md for implementation details. The upstream README follows below.
+
 [![CI status](https://ci.codeberg.org/api/badges/dnkl/foot/status.svg)](https://ci.codeberg.org/dnkl/foot)
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/foot.svg?columns=4)](https://repology.org/project/foot/versions)

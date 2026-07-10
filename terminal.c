@@ -3995,12 +3995,26 @@ term_bell(struct terminal *term)
     if ((term->conf->bell.command.argv.args != NULL) &&
         (!term->kbd_focus || term->conf->bell.command_focused))
     {
-        int devnull = open("/dev/null", O_RDONLY);
-        spawn(term->reaper, NULL, term->conf->bell.command.argv.args,
-              devnull, -1, -1, NULL, NULL, NULL);
+        const char *pty_name = ptsname(term->ptmx);
 
-        if (devnull >= 0)
-            close(devnull);
+        size_t argc;
+        char **argv;
+        if (spawn_expand_template(
+                &term->conf->bell.command, 1,
+                (const char *[]){"pty"},
+                (const char *[]){pty_name != NULL ? pty_name : ""},
+                &argc, &argv))
+        {
+            int devnull = open("/dev/null", O_RDONLY);
+            spawn(term->reaper, NULL, argv, devnull, -1, -1, NULL, NULL, NULL);
+
+            if (devnull >= 0)
+                close(devnull);
+
+            for (size_t i = 0; i < argc; i++)
+                free(argv[i]);
+            free(argv);
+        }
     }
 }
 
