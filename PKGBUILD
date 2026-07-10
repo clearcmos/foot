@@ -15,6 +15,7 @@ depends=(fcft
 makedepends=(git
              meson
              scdoc
+             tllist
              wayland-protocols)
 provides=('foot')
 conflicts=('foot')
