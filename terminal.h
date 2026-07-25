@@ -858,7 +858,7 @@ struct terminal {
     bool grapheme_shaping;
     bool size_notifications;
 
-    /* Tab activity tracking for claude-working pulsate effect */
+    /* Most recent PTY output, used by the tab activity indicator */
     struct timespec last_pty_activity;
 };
 

@@ -75,6 +75,13 @@ Key implementation details:
 - `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab.
 - Grid vertical margin is anchored to the top (`pad_top`, not centered) to prevent text jumping during zoom.
 - Closing a tab calls `term_shutdown()` while the terminal still references the shared window, then clears `term->window` before the deferred shutdown callback. This closes the PTY/process without allowing that callback to destroy the window used by the remaining tabs. Closed tabs are not retained or recoverable.
+- The tab activity pulse is process-agnostic infrastructure. `[tab-bar]`
+  controls whether it is enabled, the comma-separated foreground process
+  names to match, its RGB color, and how recently the PTY must have produced
+  output. Defaults preserve the original Claude indicator (`claude`, green
+  `00cc33`, 700 ms). `tab-activity.c/h` provides exact process-list matching;
+  `tab.c` reads the foreground process from `/proc`, and `render.c` draws the
+  pulse.
 
 Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement. F1 shows the keyboard shortcuts help card.
 
@@ -113,9 +120,18 @@ Key implementation details:
 
 F1 toggles a keyboard shortcuts help card rendered as an `OVERLAY_HELP` overlay in `render_overlay()` in `render.c`. The card uses a two-column layout (key + description) with fixed pixel column positions for alignment. State is tracked via `term->help_visible` in `terminal.h`. Any keypress dismisses the overlay (handled in `key_press_release()` in `input.c` before normal binding dispatch). The `BIND_ACTION_SHOW_HELP` action is defined in `key-binding.h` with default F1 binding in `config.c`.
 
-## Bell command ${pty} template (custom feature)
+## Bell command ${pty} template (legacy compatibility)
 
-The `[bell]` command in foot.ini supports a `${pty}` template variable that expands to the ringing terminal's pty device (e.g. `/dev/pts/5`). Expansion happens in `term_bell()` in `terminal.c` via `spawn_expand_template()` with `ptsname(term->ptmx)`; the expanded argv is freed after spawning. The command still only runs when the ringing tab is unfocused (`command-focused=no`), so per-tab focus semantics are unchanged. Consumed by the claude-announce pipeline in `~/arch`: the Claude Code Stop hook pre-generates a spoken TTS summary wav keyed by pty under `$XDG_RUNTIME_DIR/claude-announce/`, and foot's bell command (`claude-bell-play ${pty}`) plays and deletes it, falling back to a ding when no wav is pending. Configs without `${pty}` keep working (the template expands to the argv unchanged).
+The `[bell]` command in foot.ini supports a `${pty}` template variable that
+expands to the ringing terminal's pty device (e.g. `/dev/pts/5`). Expansion
+happens in `term_bell()` in `terminal.c` via `spawn_expand_template()` with
+`ptsname(term->ptmx)`; the expanded argv is freed after spawning. Configs
+without `${pty}` keep working.
+
+This remains for already-running Claude sessions that captured the old hook
+configuration and for the unrelated BEL fallback sound. The current
+`~/git/claude-ai-notifs` Linux path uses OSC 777 plus foot's standard
+`[desktop-notifications]` adapter and does not depend on `${pty}`.
 
 ## Build Options
 

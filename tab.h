@@ -24,9 +24,9 @@ struct tab {
     int pane_col;                       /* column in split grid */
     int pane_row;                       /* row in split grid */
 
-    /* Cached foreground process info for claude pulsate effect */
+    /* Cached foreground process classification for activity pulsing */
     pid_t cached_fg_pgid;
-    bool fg_is_claude;
+    bool fg_activity_match;
     struct timespec last_fg_check;
 };
 
@@ -50,7 +50,7 @@ struct tab_bar {
     int *tab_x_ends;             /* cumulative x end positions for hit-testing */
     bool dirty;
 
-    /* Pulsate timer for claude-working tabs (-1 when idle) */
+    /* Activity pulse timer (-1 when idle) */
     int pulse_timer_fd;
 
     /* Right-click context menu */
@@ -131,12 +131,12 @@ struct wl_callback **tab_pane_frame_cb(struct wl_window *win,
 /* Get the tab bar height in pixels (0 if hidden). */
 int tab_bar_height(const struct terminal *term);
 
-/* Called from PTY read path when a terminal produces output. Re-checks
- * (with debounce) whether the terminal's foreground process is `claude`,
- * and arms the tab-bar pulse timer if so. Cheap when not-claude. */
-void tab_pulse_kick(struct terminal *term);
+/* Called from the PTY read path when a terminal produces output. Re-checks
+ * (with debounce) whether the foreground process is configured for activity
+ * indication, and arms the tab-bar pulse timer if so. */
+void tab_activity_on_output(struct terminal *term);
 
-/* Returns true if the tab's foreground process is `claude` and there has
- * been recent PTY output (i.e. claude is actively working). Updates the
- * cached foreground-process info on the tab as a side effect. */
-bool tab_is_working(struct tab *tab);
+/* Returns true if the tab's foreground process is configured for activity
+ * indication and there has been recent PTY output. Updates the cached
+ * foreground-process classification as a side effect. */
+bool tab_activity_is_active(struct tab *tab);

@@ -591,6 +591,30 @@ test_section_desktop_notifications(void)
 }
 
 static void
+test_section_tab_bar(void)
+{
+    struct config conf = {0};
+    struct context ctx = {
+        .conf = &conf, .section = "tab-bar", .path = "unittest"};
+
+    test_invalid_key(&ctx, &parse_section_tab_bar, "invalid-key");
+    test_boolean(
+        &ctx, &parse_section_tab_bar, "activity-pulse",
+        &conf.tab_bar.activity_pulse);
+    test_string(
+        &ctx, &parse_section_tab_bar, "activity-pulse-processes",
+        &conf.tab_bar.activity_pulse_processes);
+    test_color(
+        &ctx, &parse_section_tab_bar, "activity-pulse-color", false,
+        &conf.tab_bar.activity_pulse_color);
+    test_uint32(
+        &ctx, &parse_section_tab_bar, "activity-pulse-quiet-ms",
+        &conf.tab_bar.activity_pulse_quiet_ms);
+
+    config_free(&conf);
+}
+
+static void
 test_section_scrollback(void)
 {
     struct config conf = {0};
@@ -1530,6 +1554,7 @@ main(int argc, const char *const *argv)
     test_section_security();
     test_section_bell();
     test_section_desktop_notifications();
+    test_section_tab_bar();
     test_section_scrollback();
     test_section_url();
     test_section_cursor();

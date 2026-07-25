@@ -3098,7 +3098,7 @@ render_tab_bar(struct terminal *term)
     tll_foreach(tb->tabs, it) {
         bool is_active = (&it->item == tb->active);
         bool is_hovered = (idx == tb->hovered_tab && !is_active);
-        bool is_working = tab_is_working(&it->item);
+        bool has_activity = tab_activity_is_active(&it->item);
         const int tab_width = tab_widths[idx];
 
         /* Tab background */
@@ -3123,15 +3123,17 @@ render_tab_bar(struct terminal *term)
                 &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
         }
 
-        /* Pulsating console-green overlay when claude is working */
-        if (is_working) {
-            const uint32_t green = 0xff00cc33;  /* console green */
+        /* Configurable pulse for recently active foreground processes */
+        if (has_activity) {
+            const uint32_t pulse_color =
+                0xff000000 |
+                it->item.term->conf->tab_bar.activity_pulse_color;
             pixman_color_t pulse = color_hex_to_pixman_with_alpha(
-                green, pulse_alpha, gamma_correct);
+                pulse_color, pulse_alpha, gamma_correct);
             pixman_image_fill_rectangles(
                 PIXMAN_OP_OVER, buf->pix[0], &pulse, 1,
                 &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
-            /* Black text on the green pulse for legibility */
+            /* Black text on the pulse for legibility */
             tab_fg = 0xff000000;
         }
 

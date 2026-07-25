@@ -820,6 +820,35 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 	
 	Default: _yes_
 
+# SECTION: tab-bar
+
+*activity-pulse*
+	Boolean. When enabled, a tab whose foreground process matches
+	*activity-pulse-processes* pulses while that process is producing
+	terminal output. This is useful for long-running interactive tools.
+
+	Default: _yes_.
+
+*activity-pulse-processes*
+	Comma-separated list of foreground process names that should trigger
+	the activity pulse. Names are matched exactly against the operating
+	system's process name. Whitespace around names is ignored.
+
+	Set this to the empty string (*""*) to match no processes.
+
+	Default: _claude_.
+
+*activity-pulse-color*
+	RGB color used for the activity pulse.
+
+	Default: _00cc33_.
+
+*activity-pulse-quiet-ms*
+	How recently, in milliseconds, a matching foreground process must
+	have produced terminal output to be considered active.
+
+	Default: _700_.
+
 # SECTION: scrollback
 
 *lines*

@@ -1262,6 +1262,32 @@ parse_section_desktop_notifications(struct context *ctx)
 }
 
 static bool
+parse_section_tab_bar(struct context *ctx)
+{
+    struct config *conf = ctx->conf;
+    const char *key = ctx->key;
+
+    if (streq(key, "activity-pulse"))
+        return value_to_bool(ctx, &conf->tab_bar.activity_pulse);
+
+    else if (streq(key, "activity-pulse-processes"))
+        return value_to_str(ctx, &conf->tab_bar.activity_pulse_processes);
+
+    else if (streq(key, "activity-pulse-color"))
+        return value_to_color(
+            ctx, &conf->tab_bar.activity_pulse_color, false);
+
+    else if (streq(key, "activity-pulse-quiet-ms"))
+        return value_to_uint32(
+            ctx, 10, &conf->tab_bar.activity_pulse_quiet_ms);
+
+    else {
+        LOG_CONTEXTUAL_ERR("not a valid option: %s", key);
+        return false;
+    }
+}
+
+static bool
 parse_section_scrollback(struct context *ctx)
 {
     struct config *conf = ctx->conf;
@@ -3050,6 +3076,7 @@ enum section {
     SECTION_SECURITY,
     SECTION_BELL,
     SECTION_DESKTOP_NOTIFICATIONS,
+    SECTION_TAB_BAR,
     SECTION_SCROLLBACK,
     SECTION_URL,
     SECTION_REGEX,
@@ -3086,6 +3113,7 @@ static const struct {
     [SECTION_SECURITY] =        {&parse_section_security, "security"},
     [SECTION_BELL] =            {&parse_section_bell, "bell"},
     [SECTION_DESKTOP_NOTIFICATIONS] = {&parse_section_desktop_notifications, "desktop-notifications"},
+    [SECTION_TAB_BAR] =         {&parse_section_tab_bar, "tab-bar"},
     [SECTION_SCROLLBACK] =      {&parse_section_scrollback, "scrollback"},
     [SECTION_URL] =             {&parse_section_url, "url"},
     [SECTION_REGEX] =           {&parse_section_regex, "regex", true},
@@ -3628,6 +3656,12 @@ config_load(struct config *conf, const char *conf_path,
             },
             .inhibit_when_focused = true,
         },
+        .tab_bar = {
+            .activity_pulse = true,
+            .activity_pulse_processes = xstrdup("claude"),
+            .activity_pulse_color = 0x00cc33,
+            .activity_pulse_quiet_ms = 700,
+        },
 
         .tweak = {
             .fcft_filter = FCFT_SCALING_FILTER_LANCZOS3,
@@ -3968,6 +4002,8 @@ config_clone(const struct config *old)
                          &old->desktop_notifications.command_action_arg);
     spawn_template_clone(&conf->desktop_notifications.close,
                          &old->desktop_notifications.close);
+    conf->tab_bar.activity_pulse_processes =
+        xstrdup(old->tab_bar.activity_pulse_processes);
 
     for (size_t i = 0; i < ALEN(conf->fonts); i++)
         config_font_list_clone(&conf->fonts[i], &old->fonts[i]);
@@ -4065,6 +4101,7 @@ config_free(struct config *conf)
     spawn_template_free(&conf->desktop_notifications.command);
     spawn_template_free(&conf->desktop_notifications.command_action_arg);
     spawn_template_free(&conf->desktop_notifications.close);
+    free(conf->tab_bar.activity_pulse_processes);
     for (size_t i = 0; i < ALEN(conf->fonts); i++)
         config_font_list_destroy(&conf->fonts[i]);
     free(conf->server_socket_path);

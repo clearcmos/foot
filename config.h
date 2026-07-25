@@ -420,6 +420,13 @@ struct config {
         bool inhibit_when_focused;
     } desktop_notifications;
 
+    struct {
+        bool activity_pulse;
+        char *activity_pulse_processes;
+        uint32_t activity_pulse_color;
+        uint32_t activity_pulse_quiet_ms;
+    } tab_bar;
+
     env_var_list_t env_vars;
 
     char *utmp_helper_path;

@@ -18,6 +18,7 @@
 #include "macros.h"
 #include "render.h"
 #include "shm.h"
+#include "tab-activity.h"
 #include "tab-close.h"
 #include "terminal.h"
 #include "vt.h"
@@ -873,20 +874,17 @@ tab_bar_height(const struct terminal *term)
     return (int)roundf(20 * term->scale);
 }
 
-/* How long after the last PTY byte we still consider claude "working". */
-#define PULSE_QUIET_MS 700
-
 /* How often we re-check the foreground process (the /proc lookup is debounced
  * to keep the per-byte PTY hot path cheap). */
 #define PULSE_FG_CHECK_MS 250
 
-static long
+static int64_t
 ms_since(const struct timespec *t)
 {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    long ds = (long)(now.tv_sec - t->tv_sec);
-    long dn = (long)(now.tv_nsec - t->tv_nsec);
+    int64_t ds = now.tv_sec - t->tv_sec;
+    int64_t dn = now.tv_nsec - t->tv_nsec;
     return ds * 1000 + dn / 1000000;
 }
 
@@ -902,14 +900,19 @@ find_tab(struct wl_window *win, const struct terminal *term)
     return NULL;
 }
 
-/* Update the tab's cached fg-process state by reading /proc.
- * Returns true if the foreground process is `claude`. */
+/* Update the tab's cached foreground-process classification from /proc. */
 static bool
-refresh_fg_is_claude(struct tab *tab)
+refresh_fg_activity_match(struct tab *tab)
 {
     struct terminal *term = tab->term;
-    if (term->ptmx < 0 || term->slave <= 0) {
-        tab->fg_is_claude = false;
+    const struct config *conf = term->conf;
+
+    if (!conf->tab_bar.activity_pulse ||
+        conf->tab_bar.activity_pulse_processes == NULL ||
+        conf->tab_bar.activity_pulse_processes[0] == '\0' ||
+        term->ptmx < 0 || term->slave <= 0)
+    {
+        tab->fg_activity_match = false;
         return false;
     }
 
@@ -920,16 +923,16 @@ refresh_fg_is_claude(struct tab *tab)
 
     if (fg_pgid <= 0 || shell_pgid <= 0 || fg_pgid == shell_pgid) {
         tab->cached_fg_pgid = fg_pgid;
-        tab->fg_is_claude = false;
+        tab->fg_activity_match = false;
         return false;
     }
 
     /* Same pgid as last check - reuse cached classification */
     if (fg_pgid == tab->cached_fg_pgid)
-        return tab->fg_is_claude;
+        return tab->fg_activity_match;
 
     tab->cached_fg_pgid = fg_pgid;
-    tab->fg_is_claude = false;
+    tab->fg_activity_match = false;
 
     char comm_path[64];
     char comm[256] = {0};
@@ -940,12 +943,12 @@ refresh_fg_is_claude(struct tab *tab)
             size_t len = strlen(comm);
             if (len > 0 && comm[len - 1] == '\n')
                 comm[len - 1] = '\0';
-            if (strcmp(comm, "claude") == 0)
-                tab->fg_is_claude = true;
+            tab->fg_activity_match = tab_activity_process_matches(
+                conf->tab_bar.activity_pulse_processes, comm);
         }
         fclose(f);
     }
-    return tab->fg_is_claude;
+    return tab->fg_activity_match;
 }
 
 static bool fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data);
@@ -1008,25 +1011,25 @@ fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data)
     ssize_t r = read(fd, &expirations, sizeof(expirations));
     (void)r;
 
-    /* Re-check working state and disarm if nothing is working anymore. */
-    bool any_working = false;
+    /* Re-check activity and disarm when no configured process is active. */
+    bool any_activity = false;
     tll_foreach(win->tab_bar.tabs, it) {
-        if (tab_is_working(&it->item))
-            any_working = true;
+        if (tab_activity_is_active(&it->item))
+            any_activity = true;
     }
 
     win->tab_bar.dirty = true;
     if (win->tab_bar.active != NULL)
         render_refresh(win->tab_bar.active->term);
 
-    if (!any_working)
+    if (!any_activity)
         pulse_timer_disarm(win);
 
     return true;
 }
 
 void
-tab_pulse_kick(struct terminal *term)
+tab_activity_on_output(struct terminal *term)
 {
     if (term->window == NULL)
         return;
@@ -1036,9 +1039,9 @@ tab_pulse_kick(struct terminal *term)
         return;
 
     if (ms_since(&tab->last_fg_check) >= PULSE_FG_CHECK_MS)
-        refresh_fg_is_claude(tab);
+        refresh_fg_activity_match(tab);
 
-    if (tab->fg_is_claude) {
+    if (tab->fg_activity_match) {
         if (term->window->tab_bar.pulse_timer_fd < 0) {
             term->window->tab_bar.dirty = true;
             pulse_timer_arm(term->window);
@@ -1047,17 +1050,18 @@ tab_pulse_kick(struct terminal *term)
 }
 
 bool
-tab_is_working(struct tab *tab)
+tab_activity_is_active(struct tab *tab)
 {
     struct terminal *term = tab->term;
     if (term == NULL || term->ptmx < 0)
         return false;
 
     if (ms_since(&tab->last_fg_check) >= PULSE_FG_CHECK_MS)
-        refresh_fg_is_claude(tab);
+        refresh_fg_activity_match(tab);
 
-    if (!tab->fg_is_claude)
+    if (!tab->fg_activity_match)
         return false;
 
-    return ms_since(&term->last_pty_activity) < PULSE_QUIET_MS;
+    return ms_since(&term->last_pty_activity) <
+        term->conf->tab_bar.activity_pulse_quiet_ms;
 }

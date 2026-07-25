@@ -7,10 +7,11 @@ The fast, lightweight and minimalistic Wayland terminal emulator.
 This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom modifications:
 
 - Multi-tab support: tab bar, per-tab cwd titles, process teardown on close, right-click context menu, `footclient --tab`
+- Configurable foreground-process activity pulse in the tab bar
 - Split pane mode (Ctrl+E): all tabs shown as simultaneously visible panes
 - Keyboard shortcuts help overlay (F1)
 - Mouse extras: URL underline on hover, Ctrl+Click to open URLs, right-click copies the active selection
-- `${pty}` template variable in the `[bell]` command, for per-tab external notification scripts
+- `${pty}` template variable in the `[bell]` command for legacy per-tab notification scripts
 - Custom default keybindings (Ctrl+T, Ctrl+W, Ctrl+Tab, and more)
 
 See CLAUDE.md for implementation details. The upstream README follows below.

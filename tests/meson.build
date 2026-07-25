@@ -15,3 +15,10 @@ tab_close_test = executable(
   dependencies: [pixman, xkb, fontconfig, wayland_client, fcft, tllist])
 
 test('tab-close', tab_close_test)
+
+tab_activity_test = executable(
+  'test-tab-activity',
+  'test-tab-activity.c',
+  '../tab-activity.c')
+
+test('tab-activity', tab_activity_test)
