@@ -874,7 +874,7 @@ struct terminal *term_init(
 
 bool term_shutdown(struct terminal *term);
 
-/* Exposed for tab restore */
+/* Exposed for the PGO harness */
 bool fdm_ptmx(struct fdm *fdm, int fd, int events, void *data);
 void fdm_client_terminated(
     struct reaper *reaper, pid_t pid, int status, void *data);

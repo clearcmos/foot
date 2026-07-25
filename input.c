@@ -286,10 +286,6 @@ execute_binding(struct seat *seat, struct terminal *term,
         tab_prev(term);
         return true;
 
-    case BIND_ACTION_TAB_UNDO_CLOSE:
-        tab_undo_close(term);
-        return true;
-
     case BIND_ACTION_TAB_EXPOSE:
         if (tab_count(term->window) > 1) {
             if (term->window->tab_bar.split_mode)

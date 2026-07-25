@@ -30,28 +30,16 @@ struct tab {
     struct timespec last_fg_check;
 };
 
-struct closed_tab {
-    struct terminal *term;
-    char *title;
-    int timer_fd;
-    char *scrollback;
-    size_t scrollback_len;
-    char *cwd;
-};
-
 typedef tll(struct tab) tab_list_t;
-typedef tll(struct closed_tab) closed_tab_list_t;
 
 struct tab_bar {
     tab_list_t tabs;
     struct tab *active;
-    closed_tab_list_t closed;
     struct wayl_sub_surface *surface;
     struct buffer_chain *chain;
     struct fcft_font *font;      /* fixed font for tab bar, not affected by zoom */
     int height;                  /* fixed height in pixels, set on first tab creation */
     int tab_count;
-    int undo_timeout_ms;
     int hovered_tab;             /* index of tab under mouse, -1 if none */
     bool split_mode;             /* true when split pane mode is active */
     int split_hovered;           /* index of pane under mouse, -1 if none */
@@ -74,7 +62,7 @@ struct tab_bar {
     int ctx_menu_item_count;     /* number of items in the menu */
 };
 
-void tab_bar_init(struct tab_bar *tb, int undo_timeout_ms);
+void tab_bar_init(struct tab_bar *tb);
 void tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm);
 
 /* Add the initial terminal as the first tab */
@@ -113,9 +101,6 @@ void tab_prev(struct terminal *term);
 
 /* Switch to a specific tab by index (0-based). */
 void tab_switch_to(struct wl_window *win, int index);
-
-/* Undo the last closed tab. Returns true if a tab was restored. */
-bool tab_undo_close(struct terminal *term);
 
 /* Update the title for the tab containing the given terminal. */
 void tab_update_title(struct wl_window *win, struct terminal *term,

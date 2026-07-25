@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APT_PACKAGES: >-
+    clang
+    gcc
+    git
+    libfontconfig1-dev
+    libfreetype-dev
+    libharfbuzz-dev
+    libpixman-1-dev
+    libutf8proc-dev
+    libutempter-dev
+    libwayland-dev
+    libxkbcommon-dev
+    meson
+    ncurses-bin
+    ninja-build
+    pkg-config
+    python3-venv
+    scdoc
+    wayland-protocols
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Python tooling
+        run: |
+          python3 -m venv .venv-ci
+          .venv-ci/bin/pip install \
+            --disable-pip-version-check \
+            --require-hashes \
+            --requirement .github/requirements-ci.txt
+
+      - name: Check spelling
+        run: .venv-ci/bin/codespell
+
+      - name: Type-check scripts
+        run: .venv-ci/bin/mypy
+
+      - name: Lint scripts
+        run: .venv-ci/bin/ruff check .
+
+  build:
+    name: Build (${{ matrix.compiler }}, ${{ matrix.buildtype }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cc: gcc
+            buildtype: debug
+          - compiler: clang
+            cc: clang
+            buildtype: release
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          read -r -a apt_packages <<< "$APT_PACKAGES"
+          sudo apt-get install --yes "${apt_packages[@]}"
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+        run: |
+          meson setup build-ci \
+            --buildtype=${{ matrix.buildtype }} \
+            --force-fallback-for=fcft,tllist,wayland-protocols
+
+      - name: Compile
+        run: meson compile -C build-ci
+
+      - name: Test
+        run: meson test -C build-ci --print-errorlogs
+
+      - name: Smoke-test binaries
+        run: |
+          build-ci/foot --version
+          build-ci/footclient --version
+
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          read -r -a apt_packages <<< "$APT_PACKAGES"
+          sudo apt-get install --yes "${apt_packages[@]}"
+          python3 -m venv .venv-ci
+          .venv-ci/bin/pip install \
+            --disable-pip-version-check \
+            --require-hashes \
+            --requirement .github/requirements-ci.txt
+
+      - name: Build with coverage instrumentation
+        run: |
+          meson setup build-coverage \
+            --buildtype=debug \
+            -Db_coverage=true \
+            --force-fallback-for=fcft,tllist,wayland-protocols
+          meson compile -C build-coverage
+          meson test -C build-coverage --print-errorlogs
+
+      - name: Enforce coverage ratchet
+        run: |
+          .venv-ci/bin/gcovr \
+            --root . \
+            --exclude tests/ \
+            --exclude subprojects/ \
+            --exclude build-coverage/ \
+            --fail-under-line 6 \
+            --print-summary \
+            build-coverage
+
+  ci-ok:
+    if: always()
+    needs:
+      - static-checks
+      - build
+      - coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all CI jobs to pass
+        env:
+          STATIC_CHECKS_RESULT: ${{ needs.static-checks.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+        run: |
+          test "$STATIC_CHECKS_RESULT" = success
+          test "$BUILD_RESULT" = success
+          test "$COVERAGE_RESULT" = success

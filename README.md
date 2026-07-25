@@ -6,7 +6,7 @@ The fast, lightweight and minimalistic Wayland terminal emulator.
 
 This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom modifications:
 
-- Multi-tab support: tab bar, per-tab cwd titles, close with undo, right-click context menu, `footclient --tab`
+- Multi-tab support: tab bar, per-tab cwd titles, process teardown on close, right-click context menu, `footclient --tab`
 - Split pane mode (Ctrl+E): all tabs shown as simultaneously visible panes
 - Keyboard shortcuts help overlay (F1)
 - Mouse extras: URL underline on hover, Ctrl+Click to open URLs, right-click copies the active selection
@@ -15,7 +15,7 @@ This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom mo
 
 See CLAUDE.md for implementation details. The upstream README follows below.
 
-[![CI status](https://ci.codeberg.org/api/badges/dnkl/foot/status.svg)](https://ci.codeberg.org/dnkl/foot)
+[![CI status](https://github.com/clearcmos/foot/actions/workflows/ci.yml/badge.svg)](https://github.com/clearcmos/foot/actions/workflows/ci.yml)
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/foot.svg?columns=4)](https://repology.org/project/foot/versions)
 
@@ -87,7 +87,7 @@ This fork adds multi-tab support:
 
 * Ctrl+T to open a new tab, Ctrl+W to close
 * Ctrl+Tab / Ctrl+Shift+Tab to cycle tabs (also Ctrl+PageDown/PageUp)
-* Ctrl+Shift+D to restore a closed tab
+* Closing a tab shuts down its PTY and process; closed tabs cannot be restored
 * Tab bar with dynamic-width tabs showing the current path (~/...)
 * Tabs inherit the current zoom level
 * Mouse hover and click on tabs to switch

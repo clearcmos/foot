@@ -6,5 +6,5 @@ files = '$MYPY_CONFIG_FILE_DIR/scripts'
 strict = true
 
 [tool.codespell]
-skip = 'pyproject.toml,./subprojects,./pkg,./src,./bld,foot.info,./unicode,./venv'
+skip = 'pyproject.toml,./subprojects,./pkg,./src,./bld,./build,./build-*,*.pkg.tar.zst,foot.info,./unicode,./venv'
 ignore-regex = 'terminfo capability `rin`|\* Simon Ser|\* \[zar\]\(https://codeberg.org/zar\)|iterm theme|iterm.toml|iterm/OneHalfDark.itermcolors'

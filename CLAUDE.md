@@ -28,6 +28,19 @@ meson setup --buildtype=release --prefix=/usr -Db_lto=true build
 
 The build uses meson/ninja. Dependencies (fcft, tllist) are auto-fetched as subprojects if not installed system-wide. GCC produces significantly faster binaries than Clang.
 
+## Continuous Integration
+
+`.github/workflows/ci.yml` is the authoritative CI pipeline. It runs on
+Ubuntu 24.04 and includes static Python checks, GCC debug and Clang release
+builds, tests, binary smoke checks, and a 6% line-coverage ratchet. CI forces
+the pinned fcft, tllist, and wayland-protocols fallbacks while allowing their
+nested dependencies to resolve from the system.
+
+CI-only Python tools are declared in `.github/requirements-ci.in` and
+hash-locked in `.github/requirements-ci.txt`. Regenerate the lock file with the
+`uv pip compile` command documented in the input file. Dependabot checks
+GitHub Actions and Python dependencies monthly.
+
 ## Architecture
 
 **Entry point:** `main.c` - initialization and main event loop.
@@ -48,7 +61,9 @@ The build uses meson/ninja. Dependencies (fcft, tllist) are auto-fetched as subp
 
 ## Tab support (custom feature)
 
-`tab.c/h` - tab list management, active/inactive switching, close-with-undo, per-tab title tracking.
+`tab.c/h` - tab list management, active/inactive switching, process teardown
+on close, and per-tab title tracking. `tab-close.c/h` contains the testable
+focus-selection and shutdown-before-detach helpers.
 
 Key implementation details:
 - Tab bar renders as a Wayland subsurface positioned at (0,0), drawn in `render_tab_bar()` in `render.c`.
@@ -59,8 +74,9 @@ Key implementation details:
 - New tabs inherit the parent's `font_sizes` array so zoom level carries over.
 - `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab.
 - Grid vertical margin is anchored to the top (`pad_top`, not centered) to prevent text jumping during zoom.
+- Closing a tab calls `term_shutdown()` while the terminal still references the shared window, then clears `term->window` before the deferred shutdown callback. This closes the PTY/process without allowing that callback to destroy the window used by the remaining tabs. Closed tabs are not retained or recoverable.
 
-Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev), Ctrl+Shift+D (undo close). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement. F1 shows the keyboard shortcuts help card.
+Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement. F1 shows the keyboard shortcuts help card.
 
 Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab unless the process is whitelisted. The whitelist is a `passthrough` array in `input.c` `BIND_ACTION_TAB_CLOSE` handler (currently: `nano`). Process name is read from `/proc/<pgid>/comm`. After closing, focus moves to the right neighbor; if the closed tab was rightmost, focus falls back to the left neighbor.
 

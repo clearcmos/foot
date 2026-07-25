@@ -1,13 +1,11 @@
 #include "tab.h"
 
-#include <fcntl.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
-#include <sys/ioctl.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
 
@@ -19,27 +17,24 @@
 #include "fdm.h"
 #include "macros.h"
 #include "render.h"
-#include "reaper.h"
 #include "shm.h"
+#include "tab-close.h"
 #include "terminal.h"
-#include "slave.h"
 #include "vt.h"
 #include "wayland.h"
 #include "xmalloc.h"
 
 void
-tab_bar_init(struct tab_bar *tb, int undo_timeout_ms)
+tab_bar_init(struct tab_bar *tb)
 {
     *tb = (struct tab_bar){
         .tabs = tll_init(),
         .active = NULL,
-        .closed = tll_init(),
         .surface = NULL,
         .chain = NULL,
         .font = NULL,
         .height = 0,
         .tab_count = 0,
-        .undo_timeout_ms = undo_timeout_ms,
         .hovered_tab = -1,
         .split_mode = false,
         .split_hovered = -1,
@@ -55,17 +50,6 @@ tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm)
     tll_foreach(tb->tabs, it) {
         free(it->item.title);
         tll_remove(tb->tabs, it);
-    }
-
-    tll_foreach(tb->closed, it) {
-        if (it->item.timer_fd >= 0) {
-            fdm_del(fdm, it->item.timer_fd);
-            close(it->item.timer_fd);
-        }
-        free(it->item.title);
-        free(it->item.scrollback);
-        free(it->item.cwd);
-        tll_remove(tb->closed, it);
     }
 
     if (tb->font != NULL) {
@@ -348,57 +332,21 @@ tab_close_internal(struct wl_window *win, struct tab *closing)
 
     struct terminal *closing_term = closing->term;
 
-    /* If we're closing the active tab, switch focus first. Pick the right
-     * neighbor; if the closed tab was rightmost, fall back to the left. */
-    if (closing == tb->active) {
-        struct tab *prev_tab = NULL;
-        struct tab *next_tab = NULL;
-        bool found = false;
+    int closing_index = tab_index_of(win, closing_term);
+    int active_index = tab_index_of(win, tb->active->term);
+    int focus_target = tab_close_focus_target(
+        tb->tab_count, closing_index, active_index);
+    xassert(focus_target >= 0);
+
+    /* Switch focus before removing an active tab. */
+    if (focus_target != active_index) {
+        int index = 0;
         tll_foreach(tb->tabs, it) {
-            if (&it->item == closing) {
-                found = true;
-                continue;
-            }
-            if (!found) {
-                prev_tab = &it->item;
-            } else if (next_tab == NULL) {
-                next_tab = &it->item;
+            if (index++ == focus_target) {
+                do_tab_switch(win, &it->item);
+                break;
             }
         }
-
-        struct tab *target = next_tab != NULL ? next_tab : prev_tab;
-        xassert(target != NULL);
-        do_tab_switch(win, target);
-    }
-
-    /*
-     * Kill the shell and clean up FDs manually, but keep the terminal
-     * struct alive with its grid/scrollback intact.
-     * We avoid term_shutdown to prevent the async destroy chain.
-     */
-
-    /* Remove from wayl->terms so render loop skips it */
-    tll_foreach(closing_term->wl->terms, it) {
-        if (it->item == closing_term) {
-            tll_remove(closing_term->wl->terms, it);
-            break;
-        }
-    }
-
-    /* Remove reaper callback BEFORE killing, so fdm_client_terminated
-     * never fires and the terminal struct isn't destroyed */
-    if (closing_term->slave > 0)
-        reaper_del(closing_term->reaper, closing_term->slave);
-
-    /* Unregister PTY from event loop and close it */
-    fdm_del(closing_term->fdm, closing_term->ptmx);
-    close(closing_term->ptmx);
-    closing_term->ptmx = -1;
-
-    /* Kill the shell and all its children */
-    if (closing_term->slave > 0) {
-        kill(-closing_term->slave, SIGHUP);
-        closing_term->slave = -1;
     }
 
     /* Destroy any pending window frame callback that references the closing
@@ -409,19 +357,6 @@ tab_close_internal(struct wl_window *win, struct tab *closing)
         wl_callback_destroy(win->frame_callback);
         win->frame_callback = NULL;
     }
-
-    closing_term->window = NULL;
-
-    tll_push_back(tb->closed, ((struct closed_tab){
-        .term = closing_term,
-        .title = closing->title != NULL ? xstrdup(closing->title) : NULL,
-        .timer_fd = -1,
-        .scrollback = NULL,
-        .scrollback_len = 0,
-        .cwd = NULL,
-    }));
-
-    LOG_INFO("tab closed, grid preserved for undo");
 
     /* Destroy the closing tab's pane subsurface before removing from list */
     bool was_split = tb->split_mode;
@@ -471,6 +406,12 @@ tab_close_internal(struct wl_window *win, struct tab *closing)
         term_damage_all(active);
         render_refresh(active);
     }
+
+    /* Start shutdown while the window is still attached so term_shutdown()
+     * unregisters the configured PTY from the FDM. Then detach it before the
+     * deferred fdm_shutdown() callback can destroy the shared window. */
+    if (!tab_shutdown_and_detach(closing_term, &term_shutdown))
+        LOG_ERR("failed to complete terminal shutdown for closed tab");
 
     LOG_INFO("tab closed (remaining: %d)", tb->tab_count);
     return true;
@@ -682,104 +623,6 @@ tab_switch_to(struct wl_window *win, int index)
         }
         i++;
     }
-}
-
-bool
-tab_undo_close(struct terminal *term)
-{
-    struct wl_window *win = term->window;
-    struct tab_bar *tb = &win->tab_bar;
-
-    if (tll_length(tb->closed) == 0)
-        return false;
-
-    /* Get the most recently closed tab (last in list) */
-    struct closed_tab ct = tll_back(tb->closed);
-
-    if (ct.term == NULL)
-        return false;
-
-    struct terminal *restored = ct.term;
-    restored->window = win;
-
-    /* Re-add to wayl->terms */
-    tll_push_back(restored->wl->terms, restored);
-
-    /* Create tab bar subsurface if going from 1 to 2 tabs */
-    if (tb->tab_count == 1 && tb->surface == NULL) {
-        tb->surface = xmalloc(sizeof(*tb->surface));
-        memset(tb->surface, 0, sizeof(*tb->surface));
-        if (!wayl_win_subsurface_new(win, tb->surface, true)) {
-            LOG_ERR("failed to create tab bar subsurface");
-            free(tb->surface);
-            tb->surface = NULL;
-        }
-    }
-    if (tb->chain == NULL) {
-        tb->chain = shm_chain_new(
-            restored->wl, false, 1, SHM_BITS_8, NULL, NULL);
-    }
-
-    /* Add back to tab list */
-    tll_push_back(tb->tabs, ((struct tab){
-        .term = restored,
-        .title = ct.title != NULL ? xstrdup(ct.title) : xstrdup("restored"),
-        .urgent = false,
-    }));
-    tb->tab_count++;
-    tb->dirty = true;
-
-    /* Spawn a new PTY and shell for the restored terminal */
-    {
-        int ptmx = posix_openpt(O_RDWR | O_NOCTTY);
-        if (ptmx >= 0) {
-            int flags = fcntl(ptmx, F_GETFL);
-            fcntl(ptmx, F_SETFL, flags | O_NONBLOCK);
-
-            struct winsize ws = {
-                .ws_row = restored->rows,
-                .ws_col = restored->cols,
-            };
-            ioctl(ptmx, TIOCSWINSZ, &ws);
-
-            restored->ptmx = ptmx;
-            fdm_add(restored->fdm, ptmx, EPOLLIN, &fdm_ptmx, restored);
-
-            restored->slave = slave_spawn(
-                ptmx, 0, restored->cwd, NULL, NULL,
-                &restored->conf->env_vars, restored->conf->term,
-                restored->conf->shell, restored->conf->login_shell,
-                &restored->conf->notifications);
-
-            if (restored->slave > 0) {
-                reaper_add(restored->reaper, restored->slave,
-                           &fdm_client_terminated, restored);
-            }
-
-            restored->shutdown.in_progress = false;
-            restored->shutdown.client_has_terminated = false;
-        }
-    }
-
-    /* Switch to it and force resize to recalculate margins for tab bar */
-    do_tab_switch(win, &tll_back(tb->tabs));
-    {
-        int lw = (int)roundf(restored->width / restored->scale);
-        int lh = (int)roundf(restored->height / restored->scale);
-        render_resize(restored, lw, lh, RESIZE_FORCE);
-    }
-
-    /* Clean up closed tab entry */
-    free(ct.title);
-    tll_foreach(tb->closed, it) {
-        if (it->item.term == restored) {
-            tll_remove(tb->closed, it);
-            break;
-        }
-    }
-
-    LOG_INFO("tab restored from undo queue (total: %d)", tb->tab_count);
-    return true;
 }
 
 void

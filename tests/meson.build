@@ -6,3 +6,12 @@ config_test = executable(
   dependencies: [pixman, xkb, fontconfig, wayland_client, fcft, tllist])
 
 test('config', config_test)
+
+tab_close_test = executable(
+  'test-tab-close',
+  'test-tab-close.c',
+  '../tab-close.c',
+  wl_proto_headers,
+  dependencies: [pixman, xkb, fontconfig, wayland_client, fcft, tllist])
+
+test('tab-close', tab_close_test)

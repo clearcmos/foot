@@ -1,5 +1,6 @@
 /bld/
 /build/
+/build-*/
 /pkg/
 /src/
 /subprojects/*/
