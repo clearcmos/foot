@@ -3,5 +3,5 @@
 #   --output-file .github/requirements-ci.txt
 codespell==2.4.2
 gcovr==8.6
-mypy==2.3.0
+mypy==2.3.1
 ruff==0.15.20
