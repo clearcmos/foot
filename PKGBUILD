@@ -1,6 +1,6 @@
 pkgname=foot-custom
 pkgdesc='A fast, lightweight and minimalistic Wayland terminal emulator (fork with tabs)'
-pkgver=1.26.1.r0.256f2244
+pkgver=1.26.1.r6906.g5af8bf7c
 pkgrel=1
 arch=('x86_64')
 url='https://github.com/clearcmos/foot'
@@ -24,7 +24,12 @@ sha256sums=('SKIP')
 
 pkgver() {
     cd "$pkgname"
-    printf "1.26.1.r%s.%s" "$(git rev-list 1.26.1..HEAD --count 2>/dev/null || echo 0)" "$(git rev-parse --short HEAD)"
+    # Monotonic: total commit count always increases, so every rebuild reads
+    # as an upgrade. The tag 1.26.1 is not in this fork, so a tag..HEAD count
+    # would always be 0 and pacman would compare the commit hash instead
+    # (non-monotonic, and the source of spurious "downgrading" warnings).
+    printf "1.26.1.r%s.g%s" \
+        "$(git rev-list --count HEAD)" "$(git rev-parse --short=8 HEAD)"
 }
 
 build() {
