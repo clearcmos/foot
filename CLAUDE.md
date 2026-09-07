@@ -22,11 +22,16 @@ meson compile -C build
 # Run tests
 meson test -C build
 
+# Smoke-test a build under a nested compositor
+systemd-run --user --scope --collect -q sh -c 'kwin_wayland --virtual --no-lockscreen --no-global-shortcuts --socket wayland-foottest-$$ & sleep 1; WAYLAND_DISPLAY=wayland-foottest-$$ timeout 20 ./build/foot true; kill $!'
+
 # Performance-optimized release build
 meson setup --buildtype=release --prefix=/usr -Db_lto=true build
 ```
 
 The build uses meson/ninja. Dependencies (fcft, tllist) are auto-fetched as subprojects if not installed system-wide. GCC produces significantly faster binaries than Clang.
+
+Nested `kwin_wayland --virtual` instances run at realtime priority and keep running if the launching terminal dies, so always start them inside a scope that kills the compositor with the test, as above. Before and after a smoke run, check for leftovers with `ls /run/user/1000/ | grep foottest` and `pgrep -af 'kwin_wayland --virtual'`; kill any that remain.
 
 ## Continuous Integration
 
