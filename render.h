@@ -21,6 +21,10 @@ bool render_resize(
     struct terminal *term, int width, int height, uint8_t resize_options);
 
 void render_refresh(struct terminal *term);
+
+/* Tell the compositor the window's geometry and minimum size for a
+ * content area of width x height physical pixels. */
+void render_set_window_geometry(struct terminal *term, int width, int height);
 void render_refresh_app_id(struct terminal *term);
 void render_refresh_icon(struct terminal *term);
 void render_refresh_csd(struct terminal *term);

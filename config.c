@@ -1116,6 +1116,9 @@ parse_section_main(struct context *ctx)
     else if (streq(key, "word-delimiters"))
         return value_to_wchars(ctx, &conf->word_delimiters);
 
+    else if (streq(key, "select-all-passthrough-processes"))
+        return value_to_str(ctx, &conf->select_all_passthrough_processes);
+
     else if (streq(key, "selection-target")) {
         _Static_assert(sizeof(conf->selection_target) == sizeof(int),
                        "enum is not 32-bit");
@@ -1280,6 +1283,9 @@ parse_section_tab_bar(struct context *ctx)
     else if (streq(key, "activity-pulse-quiet-ms"))
         return value_to_uint32(
             ctx, 10, &conf->tab_bar.activity_pulse_quiet_ms);
+
+    else if (streq(key, "close-passthrough-processes"))
+        return value_to_str(ctx, &conf->tab_bar.close_passthrough_processes);
 
     else {
         LOG_CONTEXTUAL_ERR("not a valid option: %s", key);
@@ -3393,8 +3399,8 @@ add_default_key_bindings(struct config *conf)
         {BIND_ACTION_TAB_NEXT, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Right}}},
         {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Left}}},
         {BIND_ACTION_TAB_EXPOSE, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_e}}},
-        {BIND_ACTION_SCROLLBACK_HOME, m("none"), {{XKB_KEY_Home}}},
-        {BIND_ACTION_SCROLLBACK_END, m("none"), {{XKB_KEY_End}}},
+        {BIND_ACTION_SCROLLBACK_HOME, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Home}}},
+        {BIND_ACTION_SCROLLBACK_END, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_End}}},
         {BIND_ACTION_SELECT_ALL, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_a}}},
         {BIND_ACTION_CURSOR_LEFT_WORD, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Left}}},
         {BIND_ACTION_CURSOR_RIGHT_WORD, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Right}}},
@@ -3661,7 +3667,9 @@ config_load(struct config *conf, const char *conf_path,
             .activity_pulse_processes = xstrdup("claude"),
             .activity_pulse_color = 0x00cc33,
             .activity_pulse_quiet_ms = 700,
+            .close_passthrough_processes = xstrdup("nano"),
         },
+        .select_all_passthrough_processes = xstrdup("claude"),
 
         .tweak = {
             .fcft_filter = FCFT_SCALING_FILTER_LANCZOS3,
@@ -4004,6 +4012,10 @@ config_clone(const struct config *old)
                          &old->desktop_notifications.close);
     conf->tab_bar.activity_pulse_processes =
         xstrdup(old->tab_bar.activity_pulse_processes);
+    conf->tab_bar.close_passthrough_processes =
+        xstrdup(old->tab_bar.close_passthrough_processes);
+    conf->select_all_passthrough_processes =
+        xstrdup(old->select_all_passthrough_processes);
 
     for (size_t i = 0; i < ALEN(conf->fonts); i++)
         config_font_list_clone(&conf->fonts[i], &old->fonts[i]);
@@ -4102,6 +4114,8 @@ config_free(struct config *conf)
     spawn_template_free(&conf->desktop_notifications.command_action_arg);
     spawn_template_free(&conf->desktop_notifications.close);
     free(conf->tab_bar.activity_pulse_processes);
+    free(conf->tab_bar.close_passthrough_processes);
+    free(conf->select_all_passthrough_processes);
     for (size_t i = 0; i < ALEN(conf->fonts); i++)
         config_font_list_destroy(&conf->fonts[i]);
     free(conf->server_socket_path);

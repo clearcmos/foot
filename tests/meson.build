@@ -10,9 +10,7 @@ test('config', config_test)
 tab_close_test = executable(
   'test-tab-close',
   'test-tab-close.c',
-  '../tab-close.c',
-  wl_proto_headers,
-  dependencies: [pixman, xkb, fontconfig, wayland_client, fcft, tllist])
+  '../tab-close.c')
 
 test('tab-close', tab_close_test)
 

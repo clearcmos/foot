@@ -87,13 +87,26 @@ See CLAUDE.md for implementation details. The upstream README follows below.
 This fork adds multi-tab support:
 
 * Ctrl+T to open a new tab, Ctrl+W to close
-* Ctrl+Tab / Ctrl+Shift+Tab to cycle tabs (also Ctrl+PageDown/PageUp)
-* Closing a tab shuts down its PTY and process; closed tabs cannot be restored
-* Tab bar with dynamic-width tabs showing the current path (~/...)
+* Ctrl+Tab / Ctrl+Shift+Tab to cycle tabs (also Ctrl+PageDown/PageUp and
+  Shift+Left/Right)
+* Closing a tab, or its shell exiting, shuts down that tab only; closed tabs
+  cannot be restored. Closing the window closes every tab.
+* Tab bar with equal-width tabs showing the shell's current path (~/...)
+* Right-click on a tab for Close Tab / Duplicate Tab
 * Tabs inherit the current zoom level
 * Mouse hover and click on tabs to switch
-* Ctrl+Click to open URLs in the default browser
+* Ctrl+E toggles a split view showing every tab as a live pane
+* `footclient --tab` opens a new tab in the focused window
+* A configurable activity pulse on tabs whose foreground process is
+  producing output (`[tab-bar]` in foot.ini, default: `claude`)
+* Ctrl+Click to open URLs in the default browser; URLs underline on hover
 * Right-click to copy selected text to clipboard
+* Ctrl+A copies the whole scrollback; PageUp/PageDown and Shift+Home/End
+  scroll it
+* F1 shows a keyboard shortcut card
+* The last window size, maximized state and zoom level are remembered
+  across restarts in `$XDG_STATE_HOME/foot/state`, as fallbacks for
+  settings foot.ini does not change
 
 # Installing
 

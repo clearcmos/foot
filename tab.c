@@ -21,42 +21,74 @@
 #include "tab-activity.h"
 #include "tab-close.h"
 #include "terminal.h"
+#include "util.h"
 #include "vt.h"
 #include "wayland.h"
 #include "xmalloc.h"
+
+/* Debounce for the /proc lookups driven from the PTY read path */
+#define PROC_CHECK_MS 250
+
+static void split_layout(struct wl_window *win);
 
 void
 tab_bar_init(struct tab_bar *tb)
 {
     *tb = (struct tab_bar){
         .tabs = tll_init(),
-        .active = NULL,
-        .surface = NULL,
-        .chain = NULL,
-        .font = NULL,
-        .height = 0,
-        .tab_count = 0,
         .hovered_tab = -1,
-        .split_mode = false,
         .split_hovered = -1,
-        .tab_x_ends = NULL,
         .dirty = true,
         .pulse_timer_fd = -1,
     };
+}
+
+static void
+pane_unmap(struct tab *tab)
+{
+    if (tab->pane != NULL) {
+        wl_surface_attach(tab->pane->surface.surf, NULL, 0, 0);
+        wl_surface_commit(tab->pane->surface.surf);
+    }
+}
+
+static void
+pane_destroy(struct tab *tab)
+{
+    if (tab->pane_frame_cb != NULL) {
+        wl_callback_destroy(tab->pane_frame_cb);
+        tab->pane_frame_cb = NULL;
+    }
+    if (tab->pane != NULL) {
+        pane_unmap(tab);
+        wayl_win_subsurface_destroy(tab->pane);
+        free(tab->pane);
+        tab->pane = NULL;
+    }
+}
+
+void
+tab_bar_unmap(struct tab_bar *tb)
+{
+    if (tb->surface != NULL) {
+        wl_surface_attach(tb->surface->surface.surf, NULL, 0, 0);
+        wl_surface_commit(tb->surface->surface.surf);
+    }
+    tll_foreach(tb->tabs, it)
+        pane_unmap(&it->item);
 }
 
 void
 tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm)
 {
     tll_foreach(tb->tabs, it) {
+        pane_destroy(&it->item);
         free(it->item.title);
         tll_remove(tb->tabs, it);
     }
 
-    if (tb->font != NULL) {
-        fcft_destroy(tb->font);
-        tb->font = NULL;
-    }
+    fcft_destroy(tb->font);
+    tb->font = NULL;
 
     if (tb->surface != NULL) {
         wayl_win_subsurface_destroy(tb->surface);
@@ -78,61 +110,112 @@ tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm)
     tb->tab_x_ends = NULL;
     tb->active = NULL;
     tb->tab_count = 0;
+    tb->split_mode = false;
 }
 
 static char *
 title_from_cwd(struct terminal *term)
 {
-    /* Read the shell's actual cwd from /proc */
-    char proc_path[64];
     char cwd_buf[PATH_MAX];
-    const char *path = NULL;
-
-    if (term->slave > 0) {
-        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
-        ssize_t len = readlink(proc_path, cwd_buf, sizeof(cwd_buf) - 1);
-        if (len > 0) {
-            cwd_buf[len] = '\0';
-            path = cwd_buf;
-        }
-    }
-
-    if (path == NULL)
-        path = term->cwd;
+    const char *path = term_shell_cwd(term, cwd_buf, sizeof(cwd_buf));
     if (path == NULL)
         return xstrdup("shell");
 
     const char *home = getenv("HOME");
-    if (home != NULL && strncmp(path, home, strlen(home)) == 0) {
+    if (home != NULL && home[0] != '\0' &&
+        strncmp(path, home, strlen(home)) == 0)
+    {
         const char *rest = path + strlen(home);
         if (*rest == '\0')
             return xstrdup("~");
-        return xasprintf("~%s", rest);
+        if (*rest == '/')
+            return xasprintf("~%s", rest);
     }
     return xstrdup(path);
 }
 
-void
-tab_bar_add_initial(struct tab_bar *tb, struct terminal *term)
-{
-    tll_push_back(tb->tabs, ((struct tab){
-        .term = term,
-        .title = title_from_cwd(term),
-        .urgent = false,
-    }));
-    tb->active = &tll_back(tb->tabs);
-    tb->tab_count = 1;
-    tb->dirty = true;
-}
-
 static struct tab *
-find_tab_for_term(struct wl_window *win, struct terminal *term)
+find_tab(const struct wl_window *win, const struct terminal *term)
 {
+    if (win == NULL)
+        return NULL;
     tll_foreach(win->tab_bar.tabs, it) {
         if (it->item.term == term)
             return &it->item;
     }
     return NULL;
+}
+
+static struct tab *
+tab_at_index(struct wl_window *win, int index)
+{
+    int i = 0;
+    tll_foreach(win->tab_bar.tabs, it) {
+        if (i++ == index)
+            return &it->item;
+    }
+    return NULL;
+}
+
+/* Returns true if the title changed */
+static bool
+refresh_title(struct tab *tab)
+{
+    clock_gettime(CLOCK_MONOTONIC, &tab->last_title_check);
+
+    char *new_title = title_from_cwd(tab->term);
+    if (tab->title != NULL && strcmp(tab->title, new_title) == 0) {
+        free(new_title);
+        return false;
+    }
+
+    free(tab->title);
+    tab->title = new_title;
+    return true;
+}
+
+static void
+push_tab(struct tab_bar *tb, struct terminal *term)
+{
+    tll_push_back(tb->tabs, ((struct tab){.term = term}));
+    refresh_title(&tll_back(tb->tabs));
+    tb->tab_count++;
+    tb->dirty = true;
+}
+
+void
+tab_bar_add_initial(struct tab_bar *tb, struct terminal *term)
+{
+    push_tab(tb, term);
+    tb->active = &tll_back(tb->tabs);
+}
+
+/* Zoom is per terminal; make dst render at the same size as src */
+static void
+copy_font_state(struct terminal *dst, const struct terminal *src)
+{
+    if (dst->cell_width == src->cell_width &&
+        dst->cell_height == src->cell_height)
+    {
+        return;
+    }
+
+    for (size_t i = 0; i < 4; i++) {
+        const size_t count = min(
+            dst->conf->fonts[i].count, src->conf->fonts[i].count);
+        for (size_t j = 0; j < count; j++)
+            dst->font_sizes[i][j] = src->font_sizes[i][j];
+
+        fcft_destroy(dst->fonts[i]);
+        dst->fonts[i] = src->fonts[i] != NULL
+            ? fcft_clone(src->fonts[i]) : NULL;
+    }
+    dst->cell_width = src->cell_width;
+    dst->cell_height = src->cell_height;
+    dst->font_x_ofs = src->font_x_ofs;
+    dst->font_y_ofs = src->font_y_ofs;
+    dst->font_baseline = src->font_baseline;
+    dst->font_line_height = src->font_line_height;
 }
 
 static void
@@ -144,38 +227,32 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
     struct terminal *old_term = win->tab_bar.active->term;
     struct terminal *new_term = new_tab->term;
 
-    /* Suppress rendering on old tab (not in split mode - all panes render) */
-    if (!win->tab_bar.split_mode)
+    if (!win->tab_bar.split_mode) {
+        /*
+         * The old tab must not draw into the shared surface anymore.
+         * Drop its queued work and any in-flight frame callback:
+         * frame_callback() only services its own terminal, so leaving
+         * the callback in place would strand the new tab's render
+         * until its next refresh.
+         */
         old_term->render.refresh.grid = false;
+        old_term->render.pending.grid = false;
+        old_term->render.pending.csd = false;
+        old_term->render.pending.search = false;
+        old_term->render.pending.urls = false;
+        if (win->frame_callback != NULL) {
+            wl_callback_destroy(win->frame_callback);
+            win->frame_callback = NULL;
+        }
+    }
 
-    /* Update active tab */
     win->tab_bar.active = new_tab;
     win->term = new_term;
 
     /* Copy active_surface from old terminal so pointer state is consistent */
     new_term->active_surface = old_term->active_surface;
 
-    /* Sync font state from old tab if zoom changed */
-    if (new_term->cell_width != old_term->cell_width ||
-        new_term->cell_height != old_term->cell_height)
-    {
-        /* Copy font sizes so reload_fonts produces matching results */
-        for (size_t i = 0; i < 4; i++) {
-            const struct config_font_list *fl = &old_term->conf->fonts[i];
-            for (size_t j = 0; j < fl->count; j++)
-                new_term->font_sizes[i][j] = old_term->font_sizes[i][j];
-
-            fcft_destroy(new_term->fonts[i]);
-            new_term->fonts[i] = old_term->fonts[i] != NULL
-                ? fcft_clone(old_term->fonts[i]) : NULL;
-        }
-        new_term->cell_width = old_term->cell_width;
-        new_term->cell_height = old_term->cell_height;
-        new_term->font_x_ofs = old_term->font_x_ofs;
-        new_term->font_y_ofs = old_term->font_y_ofs;
-        new_term->font_baseline = old_term->font_baseline;
-        new_term->font_line_height = old_term->font_line_height;
-    }
+    copy_font_state(new_term, old_term);
 
     /* Sync dimensions: resize new tab to match current window (skip in split mode) */
     new_term->scale = old_term->scale;
@@ -212,47 +289,46 @@ do_tab_switch(struct wl_window *win, struct tab *new_tab)
 
     win->tab_bar.dirty = true;
 
-    /* Update window title */
     if (new_term->window_title != NULL)
         xdg_toplevel_set_title(win->xdg_toplevel, new_term->window_title);
 
     LOG_DBG("switched to tab %d", tab_index_of(win, new_term));
 }
 
+static void
+resize_to_window(struct terminal *term)
+{
+    if (term->width <= 0)
+        return;
+    render_resize(term,
+                  (int)roundf(term->width / term->scale),
+                  (int)roundf(term->height / term->scale),
+                  RESIZE_FORCE);
+}
+
 void
 tab_attach(struct wl_window *win, struct terminal *new_term)
 {
     struct wayland *wayl = new_term->wl;
+    struct tab_bar *tb = &win->tab_bar;
 
     /* Exit split mode before adding a new tab */
-    if (win->tab_bar.split_mode)
+    if (tb->split_mode)
         tab_split_exit(win);
 
-    /* Add to tab list */
-    tll_push_back(win->tab_bar.tabs, ((struct tab){
-        .term = new_term,
-        .title = title_from_cwd(new_term),
-        .urgent = false,
-    }));
-    win->tab_bar.tab_count++;
-    win->tab_bar.dirty = true;
+    push_tab(tb, new_term);
 
-    /* Create tab bar subsurface if this is the second tab */
-    if (win->tab_bar.tab_count == 2 && win->tab_bar.surface == NULL) {
-        win->tab_bar.surface = xmalloc(sizeof(*win->tab_bar.surface));
-        memset(win->tab_bar.surface, 0, sizeof(*win->tab_bar.surface));
-        if (!wayl_win_subsurface_new(win, win->tab_bar.surface, true)) {
+    if (tb->surface == NULL) {
+        tb->surface = xcalloc(1, sizeof(*tb->surface));
+        if (!wayl_win_subsurface_new(win, tb->surface, true)) {
             LOG_ERR("failed to create tab bar subsurface");
-            free(win->tab_bar.surface);
-            win->tab_bar.surface = NULL;
+            free(tb->surface);
+            tb->surface = NULL;
         }
     }
 
-    /* Create buffer chain for tab bar rendering */
-    if (win->tab_bar.chain == NULL) {
-        win->tab_bar.chain = shm_chain_new(
-            wayl, false, 1, SHM_BITS_8, NULL, NULL);
-    }
+    if (tb->chain == NULL)
+        tb->chain = shm_chain_new(wayl, false, 1, SHM_BITS_8, NULL, NULL);
 
     /*
      * The new terminal shares the existing (already configured) window,
@@ -262,51 +338,42 @@ tab_attach(struct wl_window *win, struct terminal *new_term)
      */
     term_window_configured(new_term);
 
-    /* Use the currently-active terminal of the window as the size reference. */
-    struct terminal *reference = win->tab_bar.active != NULL
-        ? win->tab_bar.active->term : new_term;
-    int logical_width = (int)roundf(reference->width / reference->scale);
-    int logical_height = (int)roundf(reference->height / reference->scale);
-    render_resize(new_term, logical_width, logical_height, RESIZE_FORCE);
+    struct terminal *reference = tb->active->term;
+    render_resize(new_term,
+                  (int)roundf(reference->width / reference->scale),
+                  (int)roundf(reference->height / reference->scale),
+                  RESIZE_FORCE);
 
-    /* Resize all existing tabs to account for the (possibly new) tab bar */
-    tll_foreach(win->tab_bar.tabs, it) {
-        struct terminal *t = it->item.term;
-        if (t != new_term && t->width > 0) {
-            int lw = (int)roundf(t->width / t->scale);
-            int lh = (int)roundf(t->height / t->scale);
-            render_resize(t, lw, lh, RESIZE_FORCE);
+    /*
+     * The bar appears with the second tab and takes its height from
+     * every tab's grid. Later tabs leave the bar as it is. Titles of
+     * tabs that were alone may be stale: title refresh is only driven
+     * while the bar is shown.
+     */
+    if (tb->tab_count == 2) {
+        tll_foreach(tb->tabs, it) {
+            if (it->item.term != new_term) {
+                resize_to_window(it->item.term);
+                refresh_title(&it->item);
+            }
         }
     }
 
-    /* Switch to the new tab */
-    do_tab_switch(win, &tll_back(win->tab_bar.tabs));
+    do_tab_switch(win, &tll_back(tb->tabs));
 
-    LOG_INFO("new tab attached (total: %d)", win->tab_bar.tab_count);
+    LOG_INFO("new tab attached (total: %d)", tb->tab_count);
 }
 
 bool
 tab_new(struct terminal *term)
 {
     struct wl_window *win = term->window;
-    struct wayland *wayl = term->wl;
-    const struct config *conf = term->conf;
 
-    /* Read the shell's actual cwd from /proc, falling back to term->cwd */
-    char proc_path[64];
     char cwd_buf[PATH_MAX];
-    const char *cwd = term->cwd;
-    if (term->slave > 0) {
-        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
-        ssize_t len = readlink(proc_path, cwd_buf, sizeof(cwd_buf) - 1);
-        if (len > 0) {
-            cwd_buf[len] = '\0';
-            cwd = cwd_buf;
-        }
-    }
+    const char *cwd = term_shell_cwd(term, cwd_buf, sizeof(cwd_buf));
 
     struct terminal *new_term = term_init(
-        conf, term->fdm, term->reaper, wayl,
+        term->conf, term->fdm, term->reaper, term->wl,
         term->foot_exe, cwd,
         NULL,  /* token */
         NULL,  /* pty_path */
@@ -323,57 +390,28 @@ tab_new(struct terminal *term)
     return true;
 }
 
-static bool
-tab_close_internal(struct wl_window *win, struct tab *closing)
+void
+tab_detach(struct terminal *term)
 {
+    struct wl_window *win = term->window;
     struct tab_bar *tb = &win->tab_bar;
+    struct tab *closing = find_tab(win, term);
 
-    if (tb->tab_count <= 1)
-        return false;  /* Last tab - caller should close window */
+    xassert(closing != NULL);
+    xassert(tb->tab_count > 1);
 
-    struct terminal *closing_term = closing->term;
-
-    int closing_index = tab_index_of(win, closing_term);
+    int closing_index = tab_index_of(win, term);
     int active_index = tab_index_of(win, tb->active->term);
     int focus_target = tab_close_focus_target(
         tb->tab_count, closing_index, active_index);
     xassert(focus_target >= 0);
 
-    /* Switch focus before removing an active tab. */
-    if (focus_target != active_index) {
-        int index = 0;
-        tll_foreach(tb->tabs, it) {
-            if (index++ == focus_target) {
-                do_tab_switch(win, &it->item);
-                break;
-            }
-        }
-    }
+    /* Move focus away before the tab disappears (indices are pre-removal) */
+    if (focus_target != active_index)
+        tab_switch_to(win, focus_target);
 
-    /* Destroy any pending window frame callback that references the closing
-     * terminal. If not cleared here, the callback fires with term->window==NULL
-     * and destroys itself without clearing win->frame_callback, leaving a
-     * dangling pointer that causes a double-free crash in wayl_win_destroy. */
-    if (win->frame_callback != NULL) {
-        wl_callback_destroy(win->frame_callback);
-        win->frame_callback = NULL;
-    }
+    pane_destroy(closing);
 
-    /* Destroy the closing tab's pane subsurface before removing from list */
-    bool was_split = tb->split_mode;
-    if (closing->pane_frame_cb != NULL) {
-        wl_callback_destroy(closing->pane_frame_cb);
-        closing->pane_frame_cb = NULL;
-    }
-    if (closing->pane != NULL) {
-        wl_surface_attach(closing->pane->surface.surf, NULL, 0, 0);
-        wl_surface_commit(closing->pane->surface.surf);
-        wayl_win_subsurface_destroy(closing->pane);
-        free(closing->pane);
-        closing->pane = NULL;
-    }
-
-    /* Remove from tab list */
     tll_foreach(tb->tabs, it) {
         if (&it->item == closing) {
             free(it->item.title);
@@ -384,37 +422,65 @@ tab_close_internal(struct wl_window *win, struct tab *closing)
 
     tb->tab_count--;
     tb->dirty = true;
+    tb->split_hovered = -1;
+    term->window = NULL;
 
-    /* Exit split mode if too few tabs remain */
-    if (tb->tab_count <= 1 && tb->split_mode)
-        tab_split_exit(win);
-    else if (was_split && tb->split_mode) {
-        /* Still in split mode with 2+ tabs - re-layout the panes */
-        tab_split_exit(win);
-        tab_split_enter(win);
+    if (tb->split_mode) {
+        if (tb->tab_count <= 1)
+            tab_split_exit(win);
+        else
+            split_layout(win);
     }
 
-    /* Hide tab bar when down to 1 tab */
+    /* Hide the bar when down to one tab, and give the grid its space back */
     if (tb->tab_count <= 1 && tb->surface != NULL) {
         wl_surface_attach(tb->surface->surface.surf, NULL, 0, 0);
         wl_surface_commit(tb->surface->surface.surf);
 
-        /* Re-render grid to reclaim tab bar space */
         struct terminal *active = tb->active->term;
-        int logical_width = (int)roundf(active->width / active->scale);
-        int logical_height = (int)roundf(active->height / active->scale);
-        render_resize(active, logical_width, logical_height, RESIZE_FORCE);
+        resize_to_window(active);
         term_damage_all(active);
         render_refresh(active);
     }
 
-    /* Start shutdown while the window is still attached so term_shutdown()
-     * unregisters the configured PTY from the FDM. Then detach it before the
-     * deferred fdm_shutdown() callback can destroy the shared window. */
-    if (!tab_shutdown_and_detach(closing_term, &term_shutdown))
-        LOG_ERR("failed to complete terminal shutdown for closed tab");
+    LOG_INFO("tab detached (remaining: %d)", tb->tab_count);
+}
 
-    LOG_INFO("tab closed (remaining: %d)", tb->tab_count);
+void
+tab_shutdown_window(struct wl_window *win)
+{
+    struct tab_bar *tb = &win->tab_bar;
+    struct terminal *active = tb->active != NULL ? tb->active->term : win->term;
+
+    /*
+     * term_shutdown() detaches every tab but the last, mutating the
+     * list, so work from a snapshot. Inactive tabs go first so focus
+     * never has to move; the active tab, last, takes the window down.
+     */
+    size_t count = 0;
+    struct terminal **terms = xmalloc(
+        (tb->tab_count > 0 ? tb->tab_count : 1) * sizeof(terms[0]));
+    tll_foreach(tb->tabs, it) {
+        if (it->item.term != active)
+            terms[count++] = it->item.term;
+    }
+
+    for (size_t i = 0; i < count; i++)
+        term_shutdown(terms[i]);
+    term_shutdown(active);
+
+    free(terms);
+}
+
+static bool
+tab_close_internal(struct wl_window *win, struct tab *closing)
+{
+    if (win->tab_bar.tab_count <= 1)
+        return false;  /* Last tab - caller should close window */
+
+    /* term_shutdown() detaches the tab before its deferred teardown runs */
+    if (!term_shutdown(closing->term))
+        LOG_ERR("failed to shut down closed tab");
     return true;
 }
 
@@ -427,16 +493,8 @@ tab_close_active(struct terminal *term)
 bool
 tab_close_at_index(struct wl_window *win, int index)
 {
-    struct tab_bar *tb = &win->tab_bar;
-    if (index < 0 || index >= tb->tab_count)
-        return false;
-
-    int i = 0;
-    tll_foreach(tb->tabs, it) {
-        if (i++ == index)
-            return tab_close_internal(win, &it->item);
-    }
-    return false;
+    struct tab *tab = tab_at_index(win, index);
+    return tab != NULL && tab_close_internal(win, tab);
 }
 
 void
@@ -485,75 +543,62 @@ tab_ctx_menu_dismiss(struct terminal *term)
     render_refresh(term);
 }
 
-bool
-tab_ctx_menu_update_hover(struct terminal *term, int x, int y)
+static int
+ctx_menu_item_at(const struct tab_bar *tb, int x, int y)
 {
-    struct tab_bar *tb = &term->window->tab_bar;
-    if (!tb->ctx_menu_visible || tb->ctx_menu_w == 0 || tb->ctx_menu_h == 0)
-        return false;
-
-    int hovered = -1;
-    if (x >= tb->ctx_menu_x && x < tb->ctx_menu_x + tb->ctx_menu_w &&
-        y >= tb->ctx_menu_y && y < tb->ctx_menu_y + tb->ctx_menu_h)
+    if (tb->ctx_menu_w <= 0 || tb->ctx_menu_h <= 0 ||
+        x < tb->ctx_menu_x || x >= tb->ctx_menu_x + tb->ctx_menu_w ||
+        y < tb->ctx_menu_y || y >= tb->ctx_menu_y + tb->ctx_menu_h)
     {
-        int item_h = tb->ctx_menu_h / tb->ctx_menu_item_count;
-        if (item_h > 0)
-            hovered = (y - tb->ctx_menu_y) / item_h;
-        if (hovered >= tb->ctx_menu_item_count)
-            hovered = tb->ctx_menu_item_count - 1;
+        return -1;
     }
 
-    if (hovered != tb->ctx_menu_hovered_item) {
-        tb->ctx_menu_hovered_item = hovered;
-        render_refresh(term);
-        return true;
-    }
-    return false;
+    int item_h = tb->ctx_menu_h / tb->ctx_menu_item_count;
+    int item = item_h > 0 ? (y - tb->ctx_menu_y) / item_h : 0;
+    return min(item, tb->ctx_menu_item_count - 1);
 }
 
 bool
-tab_ctx_menu_handle_click(struct terminal *term, int x, int y)
+tab_ctx_menu_update_hover(struct terminal *term, int x, int y)
 {
     struct tab_bar *tb = &term->window->tab_bar;
     if (!tb->ctx_menu_visible)
         return false;
 
-    /* Click outside the menu rect: dismiss without action */
-    bool inside =
-        tb->ctx_menu_w > 0 && tb->ctx_menu_h > 0 &&
-        x >= tb->ctx_menu_x && x < tb->ctx_menu_x + tb->ctx_menu_w &&
-        y >= tb->ctx_menu_y && y < tb->ctx_menu_y + tb->ctx_menu_h;
+    int hovered = ctx_menu_item_at(tb, x, y);
+    if (hovered == tb->ctx_menu_hovered_item)
+        return false;
 
-    if (!inside) {
-        tab_ctx_menu_dismiss(term);
-        return true;
-    }
+    tb->ctx_menu_hovered_item = hovered;
+    render_refresh(term);
+    return true;
+}
 
-    int item_h = tb->ctx_menu_h / tb->ctx_menu_item_count;
-    int item = item_h > 0 ? (y - tb->ctx_menu_y) / item_h : 0;
-    if (item < 0) item = 0;
-    if (item >= tb->ctx_menu_item_count) item = tb->ctx_menu_item_count - 1;
-
-    int target_tab = tb->ctx_menu_target_tab;
+bool
+tab_ctx_menu_handle_click(struct terminal *term, int x, int y)
+{
     struct wl_window *win = term->window;
+    struct tab_bar *tb = &win->tab_bar;
+    if (!tb->ctx_menu_visible)
+        return false;
 
-    /* Resolve the target tab's terminal BEFORE dismissing/closing, since
-     * tab indices may shift after a close. */
-    struct terminal *target_term = NULL;
-    int i = 0;
-    tll_foreach(tb->tabs, it) {
-        if (i++ == target_tab) {
-            target_term = it->item.term;
-            break;
-        }
-    }
+    int item = ctx_menu_item_at(tb, x, y);
+    int target_tab = tb->ctx_menu_target_tab;
+
+    /* Resolve the target before dismissing/closing: indices may shift */
+    struct tab *target = tab_at_index(win, target_tab);
+    struct terminal *target_term = target != NULL ? target->term : NULL;
 
     tab_ctx_menu_dismiss(term);
 
     switch (item) {
+    case -1:  /* Click outside the menu: dismiss without action */
+        break;
+
     case 0:  /* Close Tab */
         tab_close_at_index(win, target_tab);
         break;
+
     case 1:  /* Duplicate Tab */
         if (target_term != NULL)
             tab_new(target_term);
@@ -616,52 +661,81 @@ tab_prev(struct terminal *term)
 void
 tab_switch_to(struct wl_window *win, int index)
 {
-    int i = 0;
-    tll_foreach(win->tab_bar.tabs, it) {
-        if (i == index) {
-            do_tab_switch(win, &it->item);
-            return;
-        }
-        i++;
-    }
+    struct tab *tab = tab_at_index(win, index);
+    if (tab != NULL)
+        do_tab_switch(win, tab);
 }
 
 void
-tab_update_title(struct wl_window *win, struct terminal *term,
-                 const char *title)
+tab_refresh_title(struct terminal *term)
 {
-    struct tab *tab = find_tab_for_term(win, term);
-    if (tab == NULL)
-        return;
-
-    char *new_title = title_from_cwd(term);
-
-    /* Only mark dirty if the title actually changed */
-    if (tab->title != NULL && strcmp(tab->title, new_title) == 0) {
-        free(new_title);
-        return;
-    }
-
-    free(tab->title);
-    tab->title = new_title;
-    win->tab_bar.dirty = true;
-    render_refresh(term);
+    struct tab *tab = find_tab(term->window, term);
+    if (tab != NULL && refresh_title(tab))
+        term->window->tab_bar.dirty = true;
 }
 
-void
-tab_bar_refresh_titles(struct wl_window *win, struct terminal *term)
+/*
+ * Lay the panes out in pre_split_lw x pre_split_lh logical pixels. The
+ * last column and row absorb the integer-division remainder so the panes
+ * cover the whole window.
+ */
+static void
+split_layout(struct wl_window *win)
 {
     struct tab_bar *tb = &win->tab_bar;
+    const int count = tb->tab_count;
+
+    int cols, rows;
+    if (count <= 3) {
+        /* 2-3 panes: side by side columns, full height each */
+        cols = count;
+        rows = 1;
+    } else {
+        cols = (int)ceilf(sqrtf((float)count));
+        rows = (count + cols - 1) / cols;
+    }
+
+    tb->split_cols = cols;
+    tb->split_rows = rows;
+    tb->split_hovered = -1;
+
+    const int pane_lw = tb->pre_split_lw / cols;
+    const int pane_lh = tb->pre_split_lh / rows;
+    const int rem_w = tb->pre_split_lw - pane_lw * cols;
+    const int rem_h = tb->pre_split_lh - pane_lh * rows;
+
+    LOG_DBG("split layout: %d tabs, %dx%d grid, pane=%dx%d logical, total=%dx%d",
+            count, cols, rows, pane_lw, pane_lh,
+            tb->pre_split_lw, tb->pre_split_lh);
+
+    int idx = 0;
+    tll_foreach(tb->tabs, it) {
+        struct tab *tab = &it->item;
+        tab->pane_col = idx % cols;
+        tab->pane_row = idx / cols;
+        idx++;
+
+        if (tab->pane != NULL) {
+            wl_subsurface_set_position(
+                tab->pane->sub,
+                tab->pane_col * pane_lw, tab->pane_row * pane_lh);
+        }
+
+        const int lw = pane_lw + (tab->pane_col == cols - 1 ? rem_w : 0);
+        const int lh = pane_lh + (tab->pane_row == rows - 1 ? rem_h : 0);
+        render_resize(tab->term, lw, lh, RESIZE_FORCE);
+    }
+
+    /*
+     * Subsurface positions take effect on the parent's next commit. The
+     * commit also acks a configure that arrived while in split mode.
+     */
+    wl_surface_commit(win->surface.surf);
 
     tll_foreach(tb->tabs, it) {
-        char *new_title = title_from_cwd(it->item.term);
-        if (it->item.title == NULL || strcmp(it->item.title, new_title) != 0) {
-            free(it->item.title);
-            it->item.title = new_title;
-            tb->dirty = true;
-        } else {
-            free(new_title);
-        }
+        term_damage_margins(it->item.term);
+        term_damage_all(it->item.term);
+        render_refresh(it->item.term);
     }
 }
 
@@ -673,31 +747,11 @@ tab_split_enter(struct wl_window *win)
         return;
 
     struct terminal *active = tb->active->term;
-    float scale = active->scale;
 
-    /* Save current dimensions for restoring on exit */
-    tb->pre_split_lw = (int)roundf(active->width / scale);
-    tb->pre_split_lh = (int)roundf(active->height / scale);
-
-    /* Calculate layout in logical coordinates to avoid rounding errors.
-     * set_position takes logical coords, render_resize takes logical dims. */
-    int count = tb->tab_count;
-    int cols, rows;
-    if (count <= 3) {
-        /* 2-3 panes: side by side columns, full height each */
-        cols = count;
-        rows = 1;
-    } else {
-        cols = (int)ceilf(sqrtf((float)count));
-        rows = (count + cols - 1) / cols;
-    }
-    int total_lw = tb->pre_split_lw;
-    int total_lh = tb->pre_split_lh;
-
+    /* Lay the panes out in the current content area */
+    tb->pre_split_lw = (int)roundf(active->width / active->scale);
+    tb->pre_split_lh = (int)roundf(active->height / active->scale);
     tb->split_mode = true;
-    tb->split_hovered = -1;
-    tb->split_cols = cols;
-    tb->split_rows = rows;
 
     /* Hide the tab bar subsurface */
     if (tb->surface != NULL) {
@@ -705,85 +759,24 @@ tab_split_enter(struct wl_window *win)
         wl_surface_commit(tb->surface->surface.surf);
     }
 
-    int gap_l = 0;  /* no gap - pane borders serve as separators */
-    int pane_lw = (total_lw - gap_l * (cols - 1)) / cols;
-    int pane_lh = (total_lh - gap_l * (rows - 1)) / rows;
-
-    LOG_DBG("split enter: %d tabs, %dx%d grid, pane=%dx%d logical, total=%dx%d",
-            count, cols, rows, pane_lw, pane_lh, total_lw, total_lh);
-
-    /* Sync zoom level from active tab to all others */
-    tll_foreach(tb->tabs, it) {
-        struct terminal *t = it->item.term;
-        if (t == active)
-            continue;
-        if (t->cell_width != active->cell_width ||
-            t->cell_height != active->cell_height)
-        {
-            for (size_t i = 0; i < 4; i++) {
-                const struct config_font_list *fl = &active->conf->fonts[i];
-                for (size_t j = 0; j < fl->count; j++)
-                    t->font_sizes[i][j] = active->font_sizes[i][j];
-                fcft_destroy(t->fonts[i]);
-                t->fonts[i] = active->fonts[i] != NULL
-                    ? fcft_clone(active->fonts[i]) : NULL;
-            }
-            t->cell_width = active->cell_width;
-            t->cell_height = active->cell_height;
-            t->font_x_ofs = active->font_x_ofs;
-            t->font_y_ofs = active->font_y_ofs;
-            t->font_baseline = active->font_baseline;
-            t->font_line_height = active->font_line_height;
-        }
-    }
-
-    /* Create pane subsurfaces and resize each terminal */
-    int idx = 0;
     tll_foreach(tb->tabs, it) {
         struct tab *tab = &it->item;
-        struct terminal *t = tab->term;
 
-        /* Create pane subsurface */
-        tab->pane = xmalloc(sizeof(*tab->pane));
-        memset(tab->pane, 0, sizeof(*tab->pane));
+        copy_font_state(tab->term, active);
+
+        tab->pane = xcalloc(1, sizeof(*tab->pane));
         if (!wayl_win_subsurface_new(win, tab->pane, true)) {
             LOG_ERR("failed to create pane subsurface");
             free(tab->pane);
             tab->pane = NULL;
-            idx++;
             continue;
         }
 
-        /* Position the pane in logical coordinates */
-        int col = idx % cols;
-        int row = idx / cols;
-        tab->pane_col = col;
-        tab->pane_row = row;
-        int pos_x = col * (pane_lw + gap_l);
-        int pos_y = row * (pane_lh + gap_l);
-        wl_subsurface_set_position(tab->pane->sub, pos_x, pos_y);
-
         /* Desync so each pane can commit independently */
         wl_subsurface_set_desync(tab->pane->sub);
-
-        /* Resize terminal to pane dimensions (logical) */
-        render_resize(t, pane_lw, pane_lh, RESIZE_FORCE);
-
-        idx++;
     }
 
-    /*
-     * Commit the parent surface to apply subsurface positions
-     * and make the tab bar hide take effect.
-     */
-    wl_surface_commit(win->surface.surf);
-
-    /* Trigger a full redraw of all terminals including margins */
-    tll_foreach(tb->tabs, it) {
-        term_damage_margins(it->item.term);
-        term_damage_all(it->item.term);
-        render_refresh(it->item.term);
-    }
+    split_layout(win);
 }
 
 void
@@ -796,32 +789,51 @@ tab_split_exit(struct wl_window *win)
     tb->split_mode = false;
     tb->split_hovered = -1;
 
-    /* Destroy all pane subsurfaces and frame callbacks */
-    tll_foreach(tb->tabs, it) {
-        if (it->item.pane_frame_cb != NULL) {
-            wl_callback_destroy(it->item.pane_frame_cb);
-            it->item.pane_frame_cb = NULL;
-        }
-        if (it->item.pane != NULL) {
-            wl_surface_attach(it->item.pane->surface.surf, NULL, 0, 0);
-            wl_surface_commit(it->item.pane->surface.surf);
-            wayl_win_subsurface_destroy(it->item.pane);
-            free(it->item.pane);
-            it->item.pane = NULL;
-        }
-    }
+    tll_foreach(tb->tabs, it)
+        pane_destroy(&it->item);
 
-    /* Restore all terminals to original dimensions */
+    /* Restore all terminals to the full content area */
     tll_foreach(tb->tabs, it) {
         render_resize(it->item.term, tb->pre_split_lw, tb->pre_split_lh,
                       RESIZE_FORCE);
     }
 
-    /* Trigger a full redraw and re-show tab bar */
     struct terminal *active = tb->active->term;
     term_damage_all(active);
     render_refresh(active);
     tb->dirty = true;
+}
+
+void
+tab_split_resize(struct wl_window *win, int logical_width, int logical_height)
+{
+    struct tab_bar *tb = &win->tab_bar;
+    if (!tb->split_mode)
+        return;
+
+    struct terminal *active = tb->active->term;
+
+    if (logical_width <= 0 || logical_height <= 0) {
+        /* The compositor leaves the size to us (e.g. un-maximize): back
+         * to the last floating size, which pane resizes never overwrite */
+        if (active->stashed_width <= 0 || active->stashed_height <= 0)
+            return;
+        logical_width = (int)roundf(active->stashed_width / active->scale);
+        logical_height = (int)roundf(active->stashed_height / active->scale);
+    }
+
+    if (logical_width == tb->pre_split_lw && logical_height == tb->pre_split_lh)
+        return;
+
+    tb->pre_split_lw = logical_width;
+    tb->pre_split_lh = logical_height;
+    split_layout(win);
+
+    /* Panes do not touch the window geometry; keep it at the full size */
+    render_set_window_geometry(
+        active,
+        (int)roundf(logical_width * active->scale),
+        (int)roundf(logical_height * active->scale));
 }
 
 void
@@ -830,6 +842,20 @@ tab_split_focus(struct wl_window *win, int index)
     if (!win->tab_bar.split_mode)
         return;
     tab_switch_to(win, index);
+}
+
+bool
+tab_split_active_pane_origin(const struct wl_window *win, int *x, int *y)
+{
+    const struct tab_bar *tb = &win->tab_bar;
+    *x = *y = 0;
+
+    if (!tb->split_mode || tb->active == NULL || tb->active->pane == NULL)
+        return false;
+
+    *x = tb->active->pane_col * (tb->pre_split_lw / tb->split_cols);
+    *y = tb->active->pane_row * (tb->pre_split_lh / tb->split_rows);
+    return true;
 }
 
 int
@@ -847,11 +873,24 @@ tab_index_of(const struct wl_window *win, const struct terminal *term)
 struct wl_callback **
 tab_pane_frame_cb(struct wl_window *win, struct terminal *term)
 {
-    tll_foreach(win->tab_bar.tabs, it) {
-        if (it->item.term == term)
-            return &it->item.pane_frame_cb;
+    struct tab *tab = find_tab(win, term);
+    return tab != NULL ? &tab->pane_frame_cb : NULL;
+}
+
+struct wl_surface *
+tab_topmost_surface(const struct wl_window *win)
+{
+    const struct tab_bar *tb = &win->tab_bar;
+
+    if (tb->split_mode) {
+        /* Panes are created in list order; the last one stacks on top */
+        tll_rforeach(tb->tabs, it) {
+            if (it->item.pane != NULL)
+                return it->item.pane->surface.surf;
+        }
     }
-    return NULL;
+
+    return tb->surface != NULL ? tb->surface->surface.surf : NULL;
 }
 
 int
@@ -874,10 +913,6 @@ tab_bar_height(const struct terminal *term)
     return (int)roundf(20 * term->scale);
 }
 
-/* How often we re-check the foreground process (the /proc lookup is debounced
- * to keep the per-byte PTY hot path cheap). */
-#define PULSE_FG_CHECK_MS 250
-
 static int64_t
 ms_since(const struct timespec *t)
 {
@@ -888,18 +923,6 @@ ms_since(const struct timespec *t)
     return ds * 1000 + dn / 1000000;
 }
 
-static struct tab *
-find_tab(struct wl_window *win, const struct terminal *term)
-{
-    if (win == NULL)
-        return NULL;
-    tll_foreach(win->tab_bar.tabs, it) {
-        if (it->item.term == term)
-            return &it->item;
-    }
-    return NULL;
-}
-
 /* Update the tab's cached foreground-process classification from /proc. */
 static bool
 refresh_fg_activity_match(struct tab *tab)
@@ -907,21 +930,18 @@ refresh_fg_activity_match(struct tab *tab)
     struct terminal *term = tab->term;
     const struct config *conf = term->conf;
 
+    clock_gettime(CLOCK_MONOTONIC, &tab->last_fg_check);
+
     if (!conf->tab_bar.activity_pulse ||
         conf->tab_bar.activity_pulse_processes == NULL ||
-        conf->tab_bar.activity_pulse_processes[0] == '\0' ||
-        term->ptmx < 0 || term->slave <= 0)
+        conf->tab_bar.activity_pulse_processes[0] == '\0')
     {
         tab->fg_activity_match = false;
         return false;
     }
 
-    pid_t fg_pgid = tcgetpgrp(term->ptmx);
-    pid_t shell_pgid = getpgid(term->slave);
-
-    clock_gettime(CLOCK_MONOTONIC, &tab->last_fg_check);
-
-    if (fg_pgid <= 0 || shell_pgid <= 0 || fg_pgid == shell_pgid) {
+    pid_t fg_pgid = term_foreground_pgid(term);
+    if (fg_pgid <= 0) {
         tab->cached_fg_pgid = fg_pgid;
         tab->fg_activity_match = false;
         return false;
@@ -931,23 +951,12 @@ refresh_fg_activity_match(struct tab *tab)
     if (fg_pgid == tab->cached_fg_pgid)
         return tab->fg_activity_match;
 
+    char comm[256];
     tab->cached_fg_pgid = fg_pgid;
-    tab->fg_activity_match = false;
-
-    char comm_path[64];
-    char comm[256] = {0};
-    snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)fg_pgid);
-    FILE *f = fopen(comm_path, "r");
-    if (f != NULL) {
-        if (fgets(comm, sizeof(comm), f) != NULL) {
-            size_t len = strlen(comm);
-            if (len > 0 && comm[len - 1] == '\n')
-                comm[len - 1] = '\0';
-            tab->fg_activity_match = tab_activity_process_matches(
-                conf->tab_bar.activity_pulse_processes, comm);
-        }
-        fclose(f);
-    }
+    tab->fg_activity_match =
+        term_process_comm(fg_pgid, comm, sizeof(comm)) &&
+        tab_activity_process_matches(
+            conf->tab_bar.activity_pulse_processes, comm);
     return tab->fg_activity_match;
 }
 
@@ -960,16 +969,14 @@ pulse_timer_arm(struct wl_window *win)
     if (tb->pulse_timer_fd >= 0)
         return;
 
-    struct terminal *any = tb->active != NULL ? tb->active->term : NULL;
-    if (any == NULL)
-        return;
+    struct fdm *fdm = win->term->fdm;
 
     int fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     if (fd < 0) {
         LOG_ERRNO("failed to create tab pulse timer");
         return;
     }
-    if (!fdm_add(any->fdm, fd, EPOLLIN, &fdm_pulse_timer, win)) {
+    if (!fdm_add(fdm, fd, EPOLLIN, &fdm_pulse_timer, win)) {
         close(fd);
         return;
     }
@@ -981,71 +988,63 @@ pulse_timer_arm(struct wl_window *win)
     };
     if (timerfd_settime(fd, 0, &timer, NULL) < 0) {
         LOG_ERRNO("failed to arm tab pulse timer");
-        fdm_del(any->fdm, fd);
+        fdm_del(fdm, fd);
         return;
     }
     tb->pulse_timer_fd = fd;
 }
 
-static void
-pulse_timer_disarm(struct wl_window *win)
-{
-    struct tab_bar *tb = &win->tab_bar;
-    if (tb->pulse_timer_fd < 0)
-        return;
-    struct terminal *any = tb->active != NULL ? tb->active->term : NULL;
-    if (any != NULL)
-        fdm_del(any->fdm, tb->pulse_timer_fd);
-    else
-        close(tb->pulse_timer_fd);
-    tb->pulse_timer_fd = -1;
-}
-
 static bool
 fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data)
 {
-    (void)fdm;
-    (void)events;
     struct wl_window *win = data;
+    struct tab_bar *tb = &win->tab_bar;
+
     uint64_t expirations;
     ssize_t r = read(fd, &expirations, sizeof(expirations));
     (void)r;
 
     /* Re-check activity and disarm when no configured process is active. */
     bool any_activity = false;
-    tll_foreach(win->tab_bar.tabs, it) {
+    tll_foreach(tb->tabs, it) {
         if (tab_activity_is_active(&it->item))
             any_activity = true;
     }
 
-    win->tab_bar.dirty = true;
-    if (win->tab_bar.active != NULL)
-        render_refresh(win->tab_bar.active->term);
+    /* Only the bar changes: the render hook picks the dirty flag up on
+     * its own, no grid render needed */
+    tb->dirty = true;
 
-    if (!any_activity)
-        pulse_timer_disarm(win);
+    if (!any_activity) {
+        fdm_del(fdm, fd);
+        tb->pulse_timer_fd = -1;
+    }
 
     return true;
 }
 
 void
-tab_activity_on_output(struct terminal *term)
+tab_on_output(struct terminal *term)
 {
-    if (term->window == NULL)
-        return;
-
     struct tab *tab = find_tab(term->window, term);
     if (tab == NULL)
         return;
 
-    if (ms_since(&tab->last_fg_check) >= PULSE_FG_CHECK_MS)
+    struct tab_bar *tb = &term->window->tab_bar;
+
+    /* A cwd change always comes with output (the new prompt) */
+    if (ms_since(&tab->last_title_check) >= PROC_CHECK_MS &&
+        refresh_title(tab))
+    {
+        tb->dirty = true;
+    }
+
+    if (ms_since(&tab->last_fg_check) >= PROC_CHECK_MS)
         refresh_fg_activity_match(tab);
 
-    if (tab->fg_activity_match) {
-        if (term->window->tab_bar.pulse_timer_fd < 0) {
-            term->window->tab_bar.dirty = true;
-            pulse_timer_arm(term->window);
-        }
+    if (tab->fg_activity_match && tb->pulse_timer_fd < 0) {
+        tb->dirty = true;
+        pulse_timer_arm(term->window);
     }
 }
 
@@ -1056,7 +1055,7 @@ tab_activity_is_active(struct tab *tab)
     if (term == NULL || term->ptmx < 0)
         return false;
 
-    if (ms_since(&tab->last_fg_check) >= PULSE_FG_CHECK_MS)
+    if (ms_since(&tab->last_fg_check) >= PROC_CHECK_MS)
         refresh_fg_activity_match(tab);
 
     if (!tab->fg_activity_match)

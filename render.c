@@ -1934,6 +1934,152 @@ render_ime_preedit(struct terminal *term, struct buffer *buf)
 #endif
 }
 
+/*
+ * Text helpers for the tab bar, overlays and context menu: measure and
+ * draw a string with a given font.
+ */
+static int
+text_width(struct fcft_font *font, enum fcft_subpixel subpixel,
+           const char32_t *s)
+{
+    int w = 0;
+    for (; *s != U'\0'; s++) {
+        const struct fcft_glyph *g = fcft_rasterize_char_utf32(font, *s, subpixel);
+        if (g != NULL)
+            w += g->advance.x;
+    }
+    return w;
+}
+
+static int
+text_width_utf8(struct fcft_font *font, enum fcft_subpixel subpixel,
+                const char *s)
+{
+    char32_t *s32 = ambstoc32(s);
+    if (s32 == NULL)
+        return 0;
+
+    const int w = text_width(font, subpixel, s32);
+    free(s32);
+    return w;
+}
+
+/* Draws s at (x, baseline), stopping before any glyph that would cross
+ * max_x. Returns the x position after the last drawn glyph. */
+static int
+draw_text(struct buffer *buf, struct fcft_font *font,
+          enum fcft_subpixel subpixel, const char32_t *s,
+          int x, int baseline, int max_x, const pixman_color_t *color)
+{
+    pixman_image_t *src = pixman_image_create_solid_fill(color);
+
+    for (; *s != U'\0'; s++) {
+        const struct fcft_glyph *g = fcft_rasterize_char_utf32(font, *s, subpixel);
+        if (g == NULL)
+            continue;
+        if (x + g->advance.x > max_x)
+            break;
+
+        if (pixman_image_get_format(g->pix) == PIXMAN_a8r8g8b8) {
+            /* Color glyph (emoji) */
+            pixman_image_composite32(
+                PIXMAN_OP_OVER, g->pix, NULL, buf->pix[0],
+                0, 0, 0, 0, x + g->x, baseline - g->y, g->width, g->height);
+        } else {
+            pixman_image_composite32(
+                PIXMAN_OP_OVER, src, g->pix, buf->pix[0],
+                0, 0, 0, 0, x + g->x, baseline - g->y, g->width, g->height);
+        }
+        x += g->advance.x;
+    }
+
+    pixman_image_unref(src);
+    return x;
+}
+
+static void
+draw_text_utf8(struct buffer *buf, struct fcft_font *font,
+               enum fcft_subpixel subpixel, const char *s,
+               int x, int baseline, const pixman_color_t *color)
+{
+    char32_t *s32 = ambstoc32(s);
+    if (s32 == NULL)
+        return;
+
+    draw_text(buf, font, subpixel, s32, x, baseline, INT_MAX, color);
+    free(s32);
+}
+
+static int
+font_height_of(const struct fcft_font *font)
+{
+    return max(font->height, font->ascent + font->descent);
+}
+
+/* The "Copied to clipboard" style pill, centered in the buffer or
+ * anchored above the mouse position */
+static void
+render_flash_message(struct terminal *term, struct buffer *buf)
+{
+    struct fcft_font *font = term->fonts[0];
+    if (term->flash.message == NULL || font == NULL)
+        return;
+
+    char32_t *msg32 = ambstoc32(term->flash.message);
+    if (msg32 == NULL)
+        return;
+
+    const bool gc = wayl_do_linear_blending(term->wl, term->conf);
+    const int width = text_width(font, term->font_subpixel, msg32);
+    const int font_height = font_height_of(font);
+    const int pad = font->max_advance.x;
+    int x, y_top;
+
+    if (term->flash.use_mouse_pos) {
+        /* Top-right of the cursor, clamped to the buffer */
+        x = term->flash.mouse_x;
+        y_top = term->flash.mouse_y - font_height - pad;
+        if (x + width + pad > buf->width)
+            x = buf->width - width - pad;
+        if (x < pad)
+            x = pad;
+        if (y_top < pad)
+            y_top = pad;
+    } else {
+        x = (buf->width - width) / 2;
+        y_top = (buf->height - font_height) / 2;
+    }
+
+    pixman_color_t pill_bg = color_hex_to_pixman(0xff333333, gc);
+    pixman_image_fill_rectangles(
+        PIXMAN_OP_OVER, buf->pix[0], &pill_bg, 1,
+        &(pixman_rectangle16_t){
+            x - pad, y_top - pad / 2, width + pad * 2, font_height + pad});
+
+    pixman_color_t text_color = color_hex_to_pixman(0xffeeeeee, gc);
+    draw_text(buf, font, term->font_subpixel, msg32,
+              x, y_top + font->ascent, INT_MAX, &text_color);
+    free(msg32);
+}
+
+/*
+ * Subsurfaces stack in creation order, and the tab bar and split panes
+ * are created after the overlay: lift it above the topmost of them
+ * every time it is (re)mapped. In split mode the overlay covers the
+ * active pane only.
+ */
+static void
+overlay_place(struct terminal *term, struct wayl_sub_surface *overlay)
+{
+    struct wl_surface *below = tab_topmost_surface(term->window);
+    if (below != NULL)
+        wl_subsurface_place_above(overlay->sub, below);
+
+    int x, y;
+    tab_split_active_pane_origin(term->window, &x, &y);
+    wl_subsurface_set_position(overlay->sub, x, y);
+}
+
 static void
 render_overlay_single_pixel(struct terminal *term, enum overlay_style style,
                             pixman_color_t color)
@@ -1971,15 +2117,6 @@ render_overlay_single_pixel(struct terminal *term, enum overlay_style style,
 
     quirk_weston_subsurface_desync_on(overlay->sub);
 
-    /* The tab bar subsurface is created later than the overlay so it
-     * stacks on top by default. Lift the overlay above it (and above
-     * panes in split mode) so overlays are always visible. */
-    if (term->window->tab_bar.split_mode)
-        wl_subsurface_place_above(overlay->sub, term->window->surface.surf);
-    else if (term->window->tab_bar.surface != NULL)
-        wl_subsurface_place_above(
-            overlay->sub, term->window->tab_bar.surface->surface.surf);
-
     if (style != term->render.last_overlay_style) {
         buf = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
             wayl->single_pixel_manager,
@@ -1997,20 +2134,7 @@ render_overlay_single_pixel(struct terminal *term, enum overlay_style style,
         roundf(term->width / term->scale),
         roundf(term->height / term->scale));
 
-    {
-        int ox = 0, oy = 0;
-        if (term->window->tab_bar.split_mode) {
-            struct tab_bar *tb = &term->window->tab_bar;
-            if (tb->active != NULL && tb->active->pane != NULL) {
-                int gap_l = 0;
-                int pane_lw = (tb->pre_split_lw - gap_l * (tb->split_cols - 1)) / tb->split_cols;
-                int pane_lh = (tb->pre_split_lh - gap_l * (tb->split_rows - 1)) / tb->split_rows;
-                ox = tb->active->pane_col * (pane_lw + gap_l);
-                oy = tb->active->pane_row * (pane_lh + gap_l);
-            }
-        }
-        wl_subsurface_set_position(overlay->sub, ox, oy);
-    }
+    overlay_place(term, overlay);
 
     wl_surface_damage_buffer(
         overlay->surface.surf, 0, 0, term->width, term->height);
@@ -2082,10 +2206,13 @@ render_overlay(struct terminal *term)
     const bool has_flash_message =
         style == OVERLAY_FLASH && term->flash.message != NULL;
 
-    const bool single_pixel =
+    /* Plain full-surface tints can be a single pixel stretched by a viewport */
+    const bool plain_tint =
         (style == OVERLAY_UNICODE_MODE || style == OVERLAY_FLASH) &&
-        !has_flash_message &&
-        style != OVERLAY_HELP &&
+        !has_flash_message;
+
+    const bool single_pixel =
+        plain_tint &&
         term->wl->single_pixel_manager != NULL &&
         overlay->surface.viewport != NULL;
 
@@ -2217,12 +2344,11 @@ render_overlay(struct terminal *term)
         pixman_region32_fini(&damage);
     }
 
-    else if (buf == term->render.last_overlay_buf &&
-             style == term->render.last_overlay_style &&
-             !has_flash_message &&
-             style != OVERLAY_HELP)
+    else if (plain_tint &&
+             buf == term->render.last_overlay_buf &&
+             style == term->render.last_overlay_style)
     {
-        xassert(style == OVERLAY_FLASH || style == OVERLAY_UNICODE_MODE);
+        /* Same tint in the same buffer as last frame: nothing to redraw */
         shm_did_not_use_buf(buf);
         return;
     } else {
@@ -2242,80 +2368,14 @@ render_overlay(struct terminal *term)
             &(pixman_rectangle16_t){0, 0, term->width, term->height});
     }
 
-    /* Render flash message text centered on overlay */
-    if (has_flash_message && term->fonts[0] != NULL) {
-        const bool gc = wayl_do_linear_blending(term->wl, term->conf);
-        struct fcft_font *font = term->fonts[0];
-        char32_t *msg32 = ambstoc32(term->flash.message);
-        if (msg32 != NULL) {
-            /* Measure text width */
-            int text_width = 0;
-            for (const char32_t *c = msg32; *c; c++) {
-                const struct fcft_glyph *g = fcft_rasterize_char_utf32(
-                    font, *c, term->font_subpixel);
-                if (g) text_width += g->advance.x;
-            }
-
-            int font_height = max(font->height, font->ascent + font->descent);
-            int pad = font->max_advance.x;
-            int x, y_top;
-
-            if (term->flash.use_mouse_pos) {
-                /* Anchor pill to top-right of cursor */
-                x = term->flash.mouse_x;
-                y_top = term->flash.mouse_y - font_height - pad;
-
-                /* Clamp to screen bounds */
-                if (x < pad) x = pad;
-                if (x + text_width + pad > term->width)
-                    x = term->width - text_width - pad;
-                if (y_top < pad) y_top = pad;
-            } else {
-                /* Center on screen */
-                x = (term->width - text_width) / 2;
-                y_top = (term->height - font_height) / 2;
-            }
-
-            int baseline = y_top + font->ascent;
-
-            /* Draw background pill */
-            pixman_color_t pill_bg = color_hex_to_pixman_with_alpha(
-                0xff333333, 0xffff, gc);
-            pixman_image_fill_rectangles(
-                PIXMAN_OP_OVER, buf->pix[0], &pill_bg, 1,
-                &(pixman_rectangle16_t){
-                    x - pad, y_top - pad/2,
-                    text_width + pad*2, font_height + pad});
-
-            /* Draw text */
-            pixman_color_t text_color = color_hex_to_pixman(0xffeeeeee, gc);
-            pixman_image_t *src = pixman_image_create_solid_fill(&text_color);
-            for (const char32_t *c = msg32; *c; c++) {
-                const struct fcft_glyph *g = fcft_rasterize_char_utf32(
-                    font, *c, term->font_subpixel);
-                if (g == NULL) continue;
-                if (pixman_image_get_format(g->pix) == PIXMAN_a8r8g8b8) {
-                    pixman_image_composite32(
-                        PIXMAN_OP_OVER, g->pix, NULL, buf->pix[0],
-                        0, 0, 0, 0, x + g->x, baseline - g->y,
-                        g->width, g->height);
-                } else {
-                    pixman_image_composite32(
-                        PIXMAN_OP_OVER, src, g->pix, buf->pix[0],
-                        0, 0, 0, 0, x + g->x, baseline - g->y,
-                        g->width, g->height);
-                }
-                x += g->advance.x;
-            }
-            pixman_image_unref(src);
-            free(msg32);
-        }
-    }
+    if (has_flash_message)
+        render_flash_message(term, buf);
 
     /* Render help card centered on overlay */
     if (style == OVERLAY_HELP && term->fonts[0] != NULL) {
         const bool gc = wayl_do_linear_blending(term->wl, term->conf);
         struct fcft_font *font = term->fonts[0];
+        const enum fcft_subpixel subpixel = term->font_subpixel;
 
         struct help_entry {
             const char *key;   /* NULL = blank separator line */
@@ -2339,6 +2399,8 @@ render_overlay(struct terminal *term)
             {NULL, NULL},
             {"Ctrl+F",            "Search"},
             {"Ctrl+Click",        "Open URL"},
+            {"PgUp/PgDn",         "Scroll a page"},
+            {"Shift+Home/End",    "Scroll to top/bottom"},
             {NULL, NULL},
             {"Ctrl++/-/0",        "Zoom in/out/reset"},
             {"Ctrl+Left/Right",   "Word jump"},
@@ -2347,65 +2409,35 @@ render_overlay(struct terminal *term)
             {"F1",                "This help"},
             {"Press any key to close", NULL},
         };
-        const int entry_count = sizeof(entries) / sizeof(entries[0]);
-        int font_height = max(font->height, font->ascent + font->descent);
-        int line_spacing = font_height + font_height / 4;
-        int pad = font->max_advance.x;
+        const int entry_count = ALEN(entries);
+        const int font_height = font_height_of(font);
+        const int line_spacing = font_height + font_height / 4;
+        const int pad = font->max_advance.x;
 
-        /* Helper to measure a string's pixel width */
-        #define MEASURE_STR(s, out_w) do { \
-            (out_w) = 0; \
-            char32_t *_m32 = ambstoc32(s); \
-            if (_m32) { \
-                for (const char32_t *_c = _m32; *_c; _c++) { \
-                    const struct fcft_glyph *_g = fcft_rasterize_char_utf32( \
-                        font, *_c, term->font_subpixel); \
-                    if (_g) (out_w) += _g->advance.x; \
-                } \
-                free(_m32); \
-            } \
-        } while (0)
-
-        /* Find widest key column and widest description column */
-        int max_key_w = 0, max_desc_w = 0;
+        /* Column widths: widest key, widest description, widest
+         * single-column line */
+        int max_key_w = 0, max_desc_w = 0, max_single_w = 0;
         for (int i = 0; i < entry_count; i++) {
-            if (entries[i].key != NULL && entries[i].desc != NULL) {
-                int kw, dw;
-                MEASURE_STR(entries[i].key, kw);
-                MEASURE_STR(entries[i].desc, dw);
-                if (kw > max_key_w) max_key_w = kw;
-                if (dw > max_desc_w) max_desc_w = dw;
-            } else if (entries[i].key != NULL) {
-                int tw;
-                MEASURE_STR(entries[i].key, tw);
-                /* single-column lines measured separately below */
-                (void)tw;
-            }
+            if (entries[i].key == NULL)
+                continue;
+
+            const int kw = text_width_utf8(font, subpixel, entries[i].key);
+            if (entries[i].desc != NULL) {
+                max_key_w = max(max_key_w, kw);
+                max_desc_w = max(
+                    max_desc_w, text_width_utf8(font, subpixel, entries[i].desc));
+            } else
+                max_single_w = max(max_single_w, kw);
         }
 
-        int col_gap = pad * 2;
-        int two_col_w = max_key_w + col_gap + max_desc_w;
-
-        /* Also check single-column lines (title, footer) */
-        int max_single_w = 0;
-        for (int i = 0; i < entry_count; i++) {
-            if (entries[i].key != NULL && entries[i].desc == NULL) {
-                int tw;
-                MEASURE_STR(entries[i].key, tw);
-                if (tw > max_single_w) max_single_w = tw;
-            }
-        }
-
-        int content_w = max(two_col_w, max_single_w);
-        int card_w = content_w + pad * 3;
-        int card_h = entry_count * line_spacing + pad * 2;
-        int card_x = (term->width - card_w) / 2;
-        int card_y = (term->height - card_h) / 2;
-        int left_margin = card_x + pad * 3 / 2;
-        int desc_x = left_margin + max_key_w + col_gap;
-
-        if (card_x < 0) card_x = 0;
-        if (card_y < 0) card_y = 0;
+        const int col_gap = pad * 2;
+        const int content_w = max(max_key_w + col_gap + max_desc_w, max_single_w);
+        const int card_w = content_w + pad * 3;
+        const int card_h = entry_count * line_spacing + pad * 2;
+        const int card_x = max((term->width - card_w) / 2, 0);
+        const int card_y = max((term->height - card_h) / 2, 0);
+        const int left_margin = card_x + pad * 3 / 2;
+        const int desc_x = left_margin + max_key_w + col_gap;
 
         /* Draw card background */
         pixman_color_t card_bg = color_hex_to_pixman_with_alpha(
@@ -2427,34 +2459,6 @@ render_overlay(struct terminal *term)
         pixman_image_fill_rectangles(
             PIXMAN_OP_OVER, buf->pix[0], &border_color, 4, borders);
 
-        /* Helper to draw a string at (x, baseline) with a given color */
-        #define DRAW_STR(s, draw_x, baseline, clr) do { \
-            char32_t *_d32 = ambstoc32(s); \
-            if (_d32) { \
-                pixman_image_t *_src = pixman_image_create_solid_fill(clr); \
-                int _dx = (draw_x); \
-                for (const char32_t *_c = _d32; *_c; _c++) { \
-                    const struct fcft_glyph *_g = fcft_rasterize_char_utf32( \
-                        font, *_c, term->font_subpixel); \
-                    if (_g == NULL) continue; \
-                    if (pixman_image_get_format(_g->pix) == PIXMAN_a8r8g8b8) { \
-                        pixman_image_composite32( \
-                            PIXMAN_OP_OVER, _g->pix, NULL, buf->pix[0], \
-                            0, 0, 0, 0, _dx + _g->x, (baseline) - _g->y, \
-                            _g->width, _g->height); \
-                    } else { \
-                        pixman_image_composite32( \
-                            PIXMAN_OP_OVER, _src, _g->pix, buf->pix[0], \
-                            0, 0, 0, 0, _dx + _g->x, (baseline) - _g->y, \
-                            _g->width, _g->height); \
-                    } \
-                    _dx += _g->advance.x; \
-                } \
-                pixman_image_unref(_src); \
-                free(_d32); \
-            } \
-        } while (0)
-
         pixman_color_t title_color = color_hex_to_pixman(0xffffffff, gc);
         pixman_color_t text_color = color_hex_to_pixman(0xffcccccc, gc);
         pixman_color_t dim_color = color_hex_to_pixman(0xff888888, gc);
@@ -2463,27 +2467,23 @@ render_overlay(struct terminal *term)
             if (entries[i].key == NULL)
                 continue;
 
-            int baseline = card_y + pad + i * line_spacing + font->ascent;
+            const int baseline = card_y + pad + i * line_spacing + font->ascent;
 
             if (entries[i].desc == NULL) {
-                /* Single-column line: title or footer */
-                pixman_color_t *clr = (i == 0) ? &title_color : &dim_color;
-
-                /* Center it */
-                int tw;
-                MEASURE_STR(entries[i].key, tw);
-                int cx = card_x + (card_w - tw) / 2;
-
-                DRAW_STR(entries[i].key, cx, baseline, clr);
+                /* Single-column line: title or footer, centered */
+                const int tw = text_width_utf8(font, subpixel, entries[i].key);
+                draw_text_utf8(
+                    buf, font, subpixel, entries[i].key,
+                    card_x + (card_w - tw) / 2, baseline,
+                    i == 0 ? &title_color : &dim_color);
             } else {
                 /* Two-column line: key on left, description aligned */
-                DRAW_STR(entries[i].key, left_margin, baseline, &text_color);
-                DRAW_STR(entries[i].desc, desc_x, baseline, &text_color);
+                draw_text_utf8(buf, font, subpixel, entries[i].key,
+                               left_margin, baseline, &text_color);
+                draw_text_utf8(buf, font, subpixel, entries[i].desc,
+                               desc_x, baseline, &text_color);
             }
         }
-
-        #undef MEASURE_STR
-        #undef DRAW_STR
 
         /* Separator line under title */
         pixman_color_t sep_color = color_hex_to_pixman_with_alpha(
@@ -2501,29 +2501,19 @@ render_overlay(struct terminal *term)
     if (style == OVERLAY_TAB_MENU && term->fonts[0] != NULL) {
         const bool gc = wayl_do_linear_blending(term->wl, term->conf);
         struct fcft_font *font = term->fonts[0];
+        const enum fcft_subpixel subpixel = term->font_subpixel;
         struct tab_bar *tb = &term->window->tab_bar;
 
         static const char *const items[] = {"Close Tab", "Duplicate Tab"};
-        const int item_count = sizeof(items) / sizeof(items[0]);
+        const int item_count = ALEN(items);
 
-        int font_height = max(font->height, font->ascent + font->descent);
-        int item_h = font_height + font_height / 2;
-        int pad_x = font->max_advance.x;
+        const int font_height = font_height_of(font);
+        const int item_h = font_height + font_height / 2;
+        const int pad_x = font->max_advance.x;
 
         int max_text_w = 0;
-        for (int i = 0; i < item_count; i++) {
-            int w = 0;
-            char32_t *m32 = ambstoc32(items[i]);
-            if (m32 != NULL) {
-                for (const char32_t *c = m32; *c; c++) {
-                    const struct fcft_glyph *g = fcft_rasterize_char_utf32(
-                        font, *c, term->font_subpixel);
-                    if (g) w += g->advance.x;
-                }
-                free(m32);
-            }
-            if (w > max_text_w) max_text_w = w;
-        }
+        for (int i = 0; i < item_count; i++)
+            max_text_w = max(max_text_w, text_width_utf8(font, subpixel, items[i]));
 
         int menu_w = max_text_w + pad_x * 3;
         int menu_h = item_h * item_count;
@@ -2581,59 +2571,19 @@ render_overlay(struct terminal *term)
 
         /* Item text */
         pixman_color_t text_color = color_hex_to_pixman(0xffeeeeee, gc);
-        pixman_image_t *src = pixman_image_create_solid_fill(&text_color);
         for (int i = 0; i < item_count; i++) {
-            int baseline = menu_y + i * item_h
+            const int baseline = menu_y + i * item_h
                 + (item_h - font_height) / 2 + font->ascent;
-            int x = menu_x + pad_x + pad_x / 2;
-            char32_t *m32 = ambstoc32(items[i]);
-            if (m32 == NULL) continue;
-            for (const char32_t *c = m32; *c; c++) {
-                const struct fcft_glyph *g = fcft_rasterize_char_utf32(
-                    font, *c, term->font_subpixel);
-                if (g == NULL) continue;
-                if (pixman_image_get_format(g->pix) == PIXMAN_a8r8g8b8) {
-                    pixman_image_composite32(
-                        PIXMAN_OP_OVER, g->pix, NULL, buf->pix[0],
-                        0, 0, 0, 0, x + g->x, baseline - g->y,
-                        g->width, g->height);
-                } else {
-                    pixman_image_composite32(
-                        PIXMAN_OP_OVER, src, g->pix, buf->pix[0],
-                        0, 0, 0, 0, x + g->x, baseline - g->y,
-                        g->width, g->height);
-                }
-                x += g->advance.x;
-            }
-            free(m32);
+            draw_text_utf8(buf, font, subpixel, items[i],
+                           menu_x + pad_x + pad_x / 2, baseline, &text_color);
         }
-        pixman_image_unref(src);
     }
 
     quirk_weston_subsurface_desync_on(overlay->sub);
 
-    if (term->window->tab_bar.split_mode)
-        wl_subsurface_place_above(overlay->sub, term->window->surface.surf);
-    else if (term->window->tab_bar.surface != NULL)
-        wl_subsurface_place_above(
-            overlay->sub, term->window->tab_bar.surface->surface.surf);
-
     wayl_surface_scale(
         term->window, &overlay->surface, buf, term->scale);
-    {
-        int ox = 0, oy = 0;
-        if (term->window->tab_bar.split_mode) {
-            struct tab_bar *tb = &term->window->tab_bar;
-            if (tb->active != NULL && tb->active->pane != NULL) {
-                int gap_l = 0;
-                int pane_lw = (tb->pre_split_lw - gap_l * (tb->split_cols - 1)) / tb->split_cols;
-                int pane_lh = (tb->pre_split_lh - gap_l * (tb->split_rows - 1)) / tb->split_rows;
-                ox = tb->active->pane_col * (pane_lw + gap_l);
-                oy = tb->active->pane_row * (pane_lh + gap_l);
-            }
-        }
-        wl_subsurface_set_position(overlay->sub, ox, oy);
-    }
+    overlay_place(term, overlay);
     wl_surface_attach(overlay->surface.surf, buf->wl_buf, 0, 0);
 
     wl_surface_damage_buffer(
@@ -3056,6 +3006,19 @@ render_tab_bar(struct terminal *term)
     int x = 0;
     int idx = 0;
 
+    if (tb->font == NULL ||
+        tb->font_dpi != term->font_dpi ||
+        tb->font_scale != term->scale ||
+        tb->font_sized_by_dpi != term->font_is_sized_by_dpi)
+    {
+        /* Configured size, independent of zoom, for the current output */
+        fcft_destroy(tb->font);
+        tb->font = term_load_font_at_config_size(term);
+        tb->font_dpi = term->font_dpi;
+        tb->font_scale = term->scale;
+        tb->font_sized_by_dpi = term->font_is_sized_by_dpi;
+    }
+
     struct fcft_font *font = tb->font != NULL ? tb->font : term->fonts[0];
     if (font == NULL)
         goto commit;
@@ -3137,59 +3100,18 @@ render_tab_bar(struct terminal *term)
             tab_fg = 0xff000000;
         }
 
-        /* Tab label text */
+        /* Tab label, centered and clipped to the tab */
         const char *title = it->item.title != NULL ? it->item.title : "shell";
         char32_t *title32 = ambstoc32(title);
         if (title32 != NULL) {
             pixman_color_t fg = color_hex_to_pixman(tab_fg, gamma_correct);
-            pixman_image_t *src = pixman_image_create_solid_fill(&fg);
+            const int width = text_width(font, term->font_subpixel, title32);
+            const int text_x = max(x + (tab_width - width) / 2, x + text_margin);
+            const int glyph_top_y = round((buf_height - font_height_of(font)) / 2.);
 
-            /* Measure text width for centering */
-            int text_width = 0;
-            for (const char32_t *c = title32; *c != 0; c++) {
-                const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(
-                    font, *c, term->font_subpixel);
-                if (glyph != NULL)
-                    text_width += glyph->advance.x;
-            }
-
-            int text_x = x + (tab_width - text_width) / 2;
-            if (text_x < x + text_margin)
-                text_x = x + text_margin;
-            const int max_text_x = x + tab_width - text_margin;
-
-            /* Baseline */
-            const int font_height = max(font->height, font->ascent + font->descent);
-            const int glyph_top_y = round((buf_height - font_height) / 2.);
-            const int baseline_y = glyph_top_y + font->ascent;
-
-            for (const char32_t *c = title32; *c != 0 && text_x < max_text_x; c++) {
-                const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(
-                    font, *c, term->font_subpixel);
-                if (glyph == NULL)
-                    continue;
-
-                if (text_x + glyph->advance.x > max_text_x)
-                    break;
-
-                if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
-                    pixman_image_composite32(
-                        PIXMAN_OP_OVER, glyph->pix, NULL, buf->pix[0],
-                        0, 0, 0, 0,
-                        text_x + glyph->x, baseline_y - glyph->y,
-                        glyph->width, glyph->height);
-                } else {
-                    pixman_image_composite32(
-                        PIXMAN_OP_OVER, src, glyph->pix, buf->pix[0],
-                        0, 0, 0, 0,
-                        text_x + glyph->x, baseline_y - glyph->y,
-                        glyph->width, glyph->height);
-                }
-
-                text_x += glyph->advance.x;
-            }
-
-            pixman_image_unref(src);
+            draw_text(buf, font, term->font_subpixel, title32,
+                      text_x, glyph_top_y + font->ascent,
+                      x + tab_width - text_margin, &fg);
             free(title32);
         }
 
@@ -3217,15 +3139,9 @@ render_tab_bar(struct terminal *term)
     free(tab_widths);
 
 commit:
-    /* Position below CSD title (or at top) */
-    {
-        int y = 0;
-        if (wayl_win_csd_titlebar_visible(win))
-            y = (int)roundf(term->conf->csd.title_height * scale);
-
-        wl_subsurface_set_position(tb->surface->sub,
-            0, (int)roundf(y / scale));
-    }
+    /* The main surface starts below any CSD title bar; the grid's top
+     * margin reserves the bar's height from the surface origin */
+    wl_subsurface_set_position(tb->surface->sub, 0, 0);
 
     wayl_surface_scale(win, &tb->surface->surface, buf, scale);
     wl_surface_attach(tb->surface->surface.surf, buf->wl_buf, 0, 0);
@@ -4476,71 +4392,10 @@ grid_render(struct terminal *term)
                     PIXMAN_OP_SRC, buf->pix[0], &bdr, n, sides);
         }
 
-        /* Render flash message directly into pane buffer (overlay subsurface
-         * is hidden behind pane subsurfaces, so we draw it inline) */
-        if (term->flash.active && term->flash.message != NULL &&
-            term->fonts[0] != NULL)
-        {
-            const bool gc = wayl_do_linear_blending(term->wl, term->conf);
-            struct fcft_font *font = term->fonts[0];
-            char32_t *msg32 = ambstoc32(term->flash.message);
-            if (msg32 != NULL) {
-                int text_width = 0;
-                for (const char32_t *c = msg32; *c; c++) {
-                    const struct fcft_glyph *gl = fcft_rasterize_char_utf32(
-                        font, *c, term->font_subpixel);
-                    if (gl) text_width += gl->advance.x;
-                }
-
-                int font_height = max(font->height, font->ascent + font->descent);
-                int pad = font->max_advance.x;
-                int x, y_top;
-
-                if (term->flash.use_mouse_pos) {
-                    x = term->flash.mouse_x;
-                    y_top = term->flash.mouse_y - font_height - pad;
-                    if (x < pad) x = pad;
-                    if (x + text_width + pad > buf->width)
-                        x = buf->width - text_width - pad;
-                    if (y_top < pad) y_top = pad;
-                } else {
-                    x = (buf->width - text_width) / 2;
-                    y_top = (buf->height - font_height) / 2;
-                }
-
-                int baseline = y_top + font->ascent;
-
-                pixman_color_t pill_bg = color_hex_to_pixman_with_alpha(
-                    0xff333333, 0xffff, gc);
-                pixman_image_fill_rectangles(
-                    PIXMAN_OP_OVER, buf->pix[0], &pill_bg, 1,
-                    &(pixman_rectangle16_t){
-                        x - pad, y_top - pad/2,
-                        text_width + pad*2, font_height + pad});
-
-                pixman_color_t text_color = color_hex_to_pixman(0xffeeeeee, gc);
-                pixman_image_t *src = pixman_image_create_solid_fill(&text_color);
-                for (const char32_t *c = msg32; *c; c++) {
-                    const struct fcft_glyph *gl = fcft_rasterize_char_utf32(
-                        font, *c, term->font_subpixel);
-                    if (gl == NULL) continue;
-                    if (pixman_image_get_format(gl->pix) == PIXMAN_a8r8g8b8) {
-                        pixman_image_composite32(
-                            PIXMAN_OP_OVER, gl->pix, NULL, buf->pix[0],
-                            0, 0, 0, 0, x + gl->x, baseline - gl->y,
-                            gl->width, gl->height);
-                    } else {
-                        pixman_image_composite32(
-                            PIXMAN_OP_OVER, src, gl->pix, buf->pix[0],
-                            0, 0, 0, 0, x + gl->x, baseline - gl->y,
-                            gl->width, gl->height);
-                    }
-                    x += gl->advance.x;
-                }
-                pixman_image_unref(src);
-                free(msg32);
-            }
-        }
+        /* The overlay subsurface covers the active pane only, so each
+         * pane draws its own flash message */
+        if (term->flash.active)
+            render_flash_message(term, buf);
     }
 
     /* Dim inactive panes in split mode */
@@ -5180,6 +5035,19 @@ frame_callback(void *data, struct wl_callback *wl_callback, uint32_t callback_da
         xassert(term->window->frame_callback == wl_callback);
         wl_callback_destroy(wl_callback);
         term->window->frame_callback = NULL;
+
+        /* A callback left over from a tab we switched away from carries
+         * no work for the shared surface. do_tab_switch() destroys it,
+         * so this is a safety net. */
+        if (term->window->tab_bar.active != NULL &&
+            term->window->tab_bar.active->term != term)
+        {
+            term->render.pending.grid = false;
+            term->render.pending.csd = false;
+            term->render.pending.search = false;
+            term->render.pending.urls = false;
+            return;
+        }
     }
 
     bool grid = term->render.pending.grid;
@@ -5394,6 +5262,58 @@ set_size_from_grid(struct terminal *term, int *width, int *height, int cols, int
 }
 
 /* Move to terminal.c? */
+void
+render_set_window_geometry(struct terminal *term, int width, int height)
+{
+    const float scale = term->scale;
+
+    /* Same minimum as render_resize(): one cell plus the tab bar */
+    const int min_width = roundf(scale * ceilf(term->cell_width / scale));
+    const int min_height = roundf(
+        scale * ceilf((term->cell_height + tab_bar_height(term)) / scale));
+
+    const bool title_shown = wayl_win_csd_titlebar_visible(term->window);
+    const bool border_shown = wayl_win_csd_borders_visible(term->window);
+
+    const int title = title_shown
+        ? roundf(term->conf->csd.title_height * scale)
+        : 0;
+    const int border = border_shown
+        ? roundf(term->conf->csd.border_width_visible * scale)
+        : 0;
+
+    /* Must use surface logical coordinates (same calculations as
+       in get_csd_data(), but with different inputs) */
+    const int toplevel_min_width = roundf(border / scale) +
+                                   roundf(min_width / scale) +
+                                   roundf(border / scale);
+
+    const int toplevel_min_height = roundf(border / scale) +
+                                    roundf(title / scale) +
+                                    roundf(min_height / scale) +
+                                    roundf(border / scale);
+
+    const int toplevel_width = roundf(border / scale) +
+                               roundf(width / scale) +
+                               roundf(border / scale);
+
+    const int toplevel_height = roundf(border / scale) +
+                                roundf(title / scale) +
+                                roundf(height / scale) +
+                                roundf(border / scale);
+
+    const int x = roundf(-border / scale);
+    const int y = roundf(-title / scale) - roundf(border / scale);
+
+    xdg_toplevel_set_min_size(
+        term->window->xdg_toplevel,
+        toplevel_min_width, toplevel_min_height);
+
+    xdg_surface_set_window_geometry(
+        term->window->xdg_surface,
+        x, y, toplevel_width, toplevel_height);
+}
+
 bool
 render_resize(struct terminal *term, int width, int height, uint8_t opts)
 {
@@ -5813,57 +5733,18 @@ damage_view:
     /* Signal TIOCSWINSZ */
     send_dimensions_to_client(term);
 
-    if (is_floating) {
+    if (is_floating && !term->window->tab_bar.split_mode) {
         /* Stash current size, to enable us to restore it when we're
-         * being un-maximized/fullscreened/tiled */
+         * being un-maximized/fullscreened/tiled. Pane sizes in split
+         * mode are not window sizes. */
         term->stashed_width = term->width;
         term->stashed_height = term->height;
     }
 
-    /* Don't update window geometry in split mode - pane dimensions are
-     * smaller than the window and would shrink the CSD frame */
-    if (!term->window->tab_bar.split_mode) {
-        const bool title_shown = wayl_win_csd_titlebar_visible(term->window);
-        const bool border_shown = wayl_win_csd_borders_visible(term->window);
-
-        const int title = title_shown
-            ? roundf(term->conf->csd.title_height * scale)
-            : 0;
-        const int border = border_shown
-            ? roundf(term->conf->csd.border_width_visible * scale)
-            : 0;
-
-        /* Must use surface logical coordinates (same calculations as
-           in get_csd_data(), but with different inputs) */
-        const int toplevel_min_width = roundf(border / scale) +
-                                       roundf(min_width / scale) +
-                                       roundf(border / scale);
-
-        const int toplevel_min_height = roundf(border / scale) +
-                                        roundf(title / scale) +
-                                        roundf(min_height / scale) +
-                                        roundf(border / scale);
-
-        const int toplevel_width = roundf(border / scale) +
-                                   roundf(term->width / scale) +
-                                   roundf(border / scale);
-
-        const int toplevel_height = roundf(border / scale) +
-                                    roundf(title / scale) +
-                                    roundf(term->height / scale) +
-                                    roundf(border / scale);
-
-        const int x = roundf(-border / scale);
-        const int y = roundf(-title / scale) - roundf(border / scale);
-
-        xdg_toplevel_set_min_size(
-            term->window->xdg_toplevel,
-            toplevel_min_width, toplevel_min_height);
-
-        xdg_surface_set_window_geometry(
-            term->window->xdg_surface,
-            x, y, toplevel_width, toplevel_height);
-    }
+    /* Panes are smaller than the window; tab_split_resize() owns the
+     * geometry in split mode */
+    if (!term->window->tab_bar.split_mode)
+        render_set_window_geometry(term, term->width, term->height);
 
     tll_free(term->normal.scroll_damage);
     tll_free(term->alt.scroll_damage);
@@ -6036,7 +5917,8 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
         bool csd = !in_split && term->render.refresh.csd;
         bool search = term->is_searching && term->render.refresh.search;
         bool urls = urls_mode_is_active(term) && term->render.refresh.urls;
-        bool tab_bar = !in_split && term->window->tab_bar.dirty;
+        bool tab_bar = !in_split &&
+            term->window->tab_bar.tab_count > 1 && term->window->tab_bar.dirty;
 
         if (!(grid | csd | search | urls | tab_bar))
             continue;
@@ -6069,12 +5951,8 @@ fdm_hook_refresh_pending_terminals(struct fdm *fdm, void *data)
                 render_csd(term);
                 quirk_weston_csd_off(term);
             }
-            if (term->window->tab_bar.tab_count > 1 &&
-                !term->window->tab_bar.split_mode) {
-                tab_bar_refresh_titles(term->window, term);
-                if (term->window->tab_bar.dirty)
-                    render_tab_bar(term);
-            }
+            if (tab_bar)
+                render_tab_bar(term);
             if (search)
                 render_search_box(term);
             if (urls)

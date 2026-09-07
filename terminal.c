@@ -46,9 +46,28 @@
 #include "vt.h"
 #include "xmalloc.h"
 #include "tab.h"
+#include "tab-activity.h"
 #include "xsnprintf.h"
 
 #define PTMX_TIMING 0
+
+/* Window state persistence, see state_save() */
+struct saved_state {
+    int width, height;             /* physical pixels */
+    bool maximized;
+    float font_pt;                 /* zoomed primary font size, one of */
+    int font_px;
+    int conf_size_type;            /* configuration at save time */
+    unsigned conf_width, conf_height;
+    float conf_font_pt;
+    int conf_font_px;
+};
+
+static bool state_load(struct saved_state *s);
+static bool state_size_conf_matches(
+    const struct terminal *term, const struct saved_state *s);
+static void state_apply_zoom(
+    struct terminal *term, const struct saved_state *s);
 
 static void
 enqueue_data_for_slave(const void *data, size_t len, size_t offset,
@@ -293,12 +312,15 @@ fdm_ptmx(struct fdm *fdm, int fd, int events, void *data)
 
         xassert(term->interactive_resizing.grid == NULL);
 
-        /* Track PTY activity for the tab activity indicator */
+        /* The tab title and activity indicator follow the PTY output */
         clock_gettime(CLOCK_MONOTONIC, &term->last_pty_activity);
         if (term->window != NULL && term->window->tab_bar.tab_count > 1)
-            tab_activity_on_output(term);
+            tab_on_output(term);
 
         vt_from_slave(term, buf, count);
+
+        /* The grid changed under any hovered URL; re-detect on next motion */
+        urls_hover_clear(term);
 
         /*
          * Keep input responsive while a busy tab streams output (e.g. an
@@ -1036,6 +1058,25 @@ font_loader_thread(void *_data)
     return *data->font != NULL;
 }
 
+/* Fontconfig pattern with the size appended, in the units the terminal
+ * sizes its fonts by */
+static char *
+font_name_with_size(const struct terminal *term, const char *pattern,
+                    const struct config_font *size)
+{
+    /* Point sizes follow the output scale unless the font is sized by DPI */
+    const float scale = term->font_is_sized_by_dpi ? 1. : term->scale;
+    char suffix[64];
+
+    if (size->px_size > 0) {
+        snprintf(suffix, sizeof(suffix), ":pixelsize=%d",
+                 (int)roundf(size->px_size * scale));
+    } else
+        snprintf(suffix, sizeof(suffix), ":size=%.2f", size->pt_size * scale);
+
+    return xstrjoin(pattern, suffix);
+}
+
 static bool
 reload_fonts(struct terminal *term, bool resize_grid)
 {
@@ -1056,20 +1097,8 @@ reload_fonts(struct terminal *term, bool resize_grid)
         const struct config_font_list *font_list = &conf->fonts[i];
 
         for (size_t j = 0; j < font_list->count; j++) {
-            const struct config_font *font = &font_list->arr[j];
-            bool use_px_size = term->font_sizes[i][j].px_size > 0;
-            char size[64];
-
-            const float scale = term->font_is_sized_by_dpi ? 1. : term->scale;
-
-            if (use_px_size)
-                snprintf(size, sizeof(size), ":pixelsize=%d",
-                         (int)roundf(term->font_sizes[i][j].px_size * scale));
-            else
-                snprintf(size, sizeof(size), ":size=%.2f",
-                         term->font_sizes[i][j].pt_size * scale);
-
-            names[i][j] = xstrjoin(font->pattern, size);
+            names[i][j] = font_name_with_size(
+                term, font_list->arr[j].pattern, &term->font_sizes[i][j]);
         }
     }
 
@@ -1187,6 +1216,38 @@ load_fonts_from_conf(struct terminal *term)
     }
 
     return reload_fonts(term, true);
+}
+
+struct fcft_font *
+term_load_font_at_config_size(struct terminal *term)
+{
+    const struct config *conf = term->conf;
+    const struct config_font_list *fl = &conf->fonts[0];
+    if (fl->count == 0)
+        return NULL;
+
+    char **names = xmalloc(fl->count * sizeof(names[0]));
+    for (size_t j = 0; j < fl->count; j++)
+        names[j] = font_name_with_size(term, fl->arr[j].pattern, &fl->arr[j]);
+
+    char *attrs = xasprintf(
+        "dpi=%.2f", term->font_is_sized_by_dpi ? term->font_dpi : 96.);
+
+    struct fcft_font_options *options = fcft_font_options_create();
+    options->scaling_filter = conf->tweak.fcft_filter;
+    options->color_glyphs.format = PIXMAN_a8r8g8b8;
+    options->color_glyphs.srgb_decode =
+        wayl_do_linear_blending(term->wl, conf);
+
+    struct fcft_font *font = fcft_from_name2(
+        fl->count, (const char **)names, attrs, options);
+
+    fcft_font_options_destroy(options);
+    free(attrs);
+    for (size_t j = 0; j < fl->count; j++)
+        free(names[j]);
+    free(names);
+    return font;
 }
 
 void fdm_client_terminated(
@@ -1479,6 +1540,8 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     xassert(tll_length(term->wl->monitors) > 0);
     term->scale = tll_front(term->wl->monitors).scale;
 
+    bool restore_maximized = false;
+
     if (existing_window != NULL) {
         /* Reuse existing window (new tab) - share parent's font state */
         struct terminal *parent = existing_window->term;
@@ -1504,8 +1567,17 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
                 term->font_sizes[i][j] = parent->font_sizes[i][j];
         }
     } else {
-        /* Restore saved font size and window dimensions from last session */
-        term_load_state(term);
+        struct saved_state saved;
+        const bool have_state = state_load(&saved);
+
+        if (have_state && state_size_conf_matches(term, &saved)) {
+            /* render_resize() sizes a new window from the stash first */
+            if (saved.width > 0 && saved.height > 0) {
+                term->stashed_width = saved.width;
+                term->stashed_height = saved.height;
+            }
+            restore_maximized = saved.maximized;
+        }
 
         /* Initialize the Wayland window backend */
         if ((term->window = wayl_win_init(term, token)) == NULL)
@@ -1514,22 +1586,15 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
         /* Register as the first tab */
         tab_bar_add_initial(&term->window->tab_bar, term);
 
+        if (have_state)
+            state_apply_zoom(term, &saved);
+
         /* Load fonts */
         if (!term_font_dpi_changed(term, 0.))
             goto err;
     }
 
     term->font_subpixel = get_font_subpixel(term);
-
-    /* Lock in tab bar height/font at default size (before any zoom) */
-    if (existing_window == NULL &&
-        term->window->tab_bar.height == 0 &&
-        term->cell_height > 0)
-    {
-        term->window->tab_bar.height = term->cell_height;
-        if (term->fonts[0] != NULL)
-            term->window->tab_bar.font = fcft_clone(term->fonts[0]);
-    }
 
     term_set_window_title(term, conf->title);
 
@@ -1539,6 +1604,8 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
     if (existing_window == NULL) {
         switch (conf->startup_mode) {
         case STARTUP_WINDOWED:
+            if (restore_maximized)
+                xdg_toplevel_set_maximized(term->window->xdg_toplevel);
             break;
 
         case STARTUP_MAXIMIZED:
@@ -1558,6 +1625,9 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
 
 err:
     term->shutdown.in_progress = true;
+    /* A tab that never joined the tab list must not take the shared window down */
+    if (existing_window != NULL)
+        term->window = NULL;
     term_destroy(term);
     return NULL;
 
@@ -1773,6 +1843,18 @@ fdm_terminate_timeout(struct fdm *fdm, int fd, int events, void *data)
     return true;
 }
 
+/*
+ * Window state persistence
+ *
+ * The last floating window size, maximized state and zoom level are
+ * written to $XDG_STATE_HOME/foot/state when a window closes and applied
+ * to new windows. They are fallbacks for what the configuration leaves
+ * alone: the file also records the configured window size and font size
+ * in effect when it was written, and a value is only restored while that
+ * configuration is unchanged. Editing foot.ini, or passing -w/-W, always
+ * wins.
+ */
+
 static char *
 state_file_path(void)
 {
@@ -1796,32 +1878,179 @@ state_file_path(void)
 }
 
 static void
-state_save(struct terminal *term)
+state_save(const struct terminal *term)
 {
+    const struct config *conf = term->conf;
+    const struct wl_window *win = term->window;
+    const struct tab_bar *tb = &win->tab_bar;
+
     char *path = state_file_path();
     if (path == NULL)
         return;
 
     FILE *f = fopen(path, "w");
     free(path);
-    if (f == NULL)
+    if (f == NULL) {
+        LOG_ERRNO("failed to write window state");
         return;
+    }
 
-    /* Save window dimensions (physical pixels) and state */
-    fprintf(f, "width=%d\n", term->width);
-    fprintf(f, "height=%d\n", term->height);
-    fprintf(f, "maximized=%d\n", term->window->is_maximized ? 1 : 0);
+    /* Last floating size; in split mode the terminals hold pane sizes */
+    int width, height;
+    if (tb->split_mode) {
+        width = roundf(tb->pre_split_lw * term->scale);
+        height = roundf(tb->pre_split_lh * term->scale);
+    } else if (term->stashed_width > 0 && term->stashed_height > 0) {
+        width = term->stashed_width;
+        height = term->stashed_height;
+    } else {
+        width = term->width;
+        height = term->height;
+    }
 
-    /* Save primary font size (index 0, first font) */
-    if (term->font_sizes[0] != NULL) {
-        if (term->font_sizes[0][0].px_size > 0)
-            fprintf(f, "font_px=%d\n", term->font_sizes[0][0].px_size);
+    fprintf(f, "width=%d\n", width);
+    fprintf(f, "height=%d\n", height);
+    fprintf(f, "maximized=%d\n", win->is_maximized ? 1 : 0);
+    fprintf(f, "conf_size=%d,%u,%u\n",
+            (int)conf->size.type, conf->size.width, conf->size.height);
+
+    if (conf->fonts[0].count > 0) {
+        const struct config_font *zoomed = &term->font_sizes[0][0];
+        const struct config_font *primary = &conf->fonts[0].arr[0];
+
+        if (zoomed->px_size > 0)
+            fprintf(f, "font_px=%d\n", zoomed->px_size);
         else
-            fprintf(f, "font_pt=%.2f\n", term->font_sizes[0][0].pt_size);
+            fprintf(f, "font_pt=%.2f\n", zoomed->pt_size);
+        fprintf(f, "conf_font=%.2f,%d\n", primary->pt_size, primary->px_size);
     }
 
     fclose(f);
-    LOG_INFO("saved window state");
+    LOG_DBG("saved window state");
+}
+
+static bool
+state_load(struct saved_state *s)
+{
+    /* Sentinels: a file without the conf_* lines never matches */
+    *s = (struct saved_state){
+        .conf_size_type = -1, .conf_font_pt = -1., .conf_font_px = -1};
+
+    char *path = state_file_path();
+    if (path == NULL)
+        return false;
+
+    FILE *f = fopen(path, "re");
+    free(path);
+    if (f == NULL)
+        return false;
+
+    char line[256];
+    int maximized = 0;
+    unsigned conf_w = 0, conf_h = 0;
+
+    while (fgets(line, sizeof(line), f) != NULL) {
+        if (sscanf(line, "width=%d", &s->width) == 1) continue;
+        if (sscanf(line, "height=%d", &s->height) == 1) continue;
+        if (sscanf(line, "maximized=%d", &maximized) == 1) continue;
+        if (sscanf(line, "font_pt=%f", &s->font_pt) == 1) continue;
+        if (sscanf(line, "font_px=%d", &s->font_px) == 1) continue;
+        if (sscanf(line, "conf_size=%d,%u,%u",
+                   &s->conf_size_type, &conf_w, &conf_h) == 3)
+        {
+            s->conf_width = conf_w;
+            s->conf_height = conf_h;
+            continue;
+        }
+        if (sscanf(line, "conf_font=%f,%d",
+                   &s->conf_font_pt, &s->conf_font_px) == 2)
+        {
+            continue;
+        }
+    }
+    fclose(f);
+
+    s->maximized = maximized != 0;
+
+    LOG_DBG("loaded window state (w=%d, h=%d, maximized=%d, pt=%.2f, px=%d)",
+            s->width, s->height, maximized, s->font_pt, s->font_px);
+    return true;
+}
+
+static bool
+state_size_conf_matches(const struct terminal *term,
+                        const struct saved_state *s)
+{
+    const struct config *conf = term->conf;
+    return s->conf_size_type == (int)conf->size.type &&
+        s->conf_width == conf->size.width &&
+        s->conf_height == conf->size.height;
+}
+
+static bool
+state_font_conf_matches(const struct terminal *term,
+                        const struct saved_state *s)
+{
+    const struct config *conf = term->conf;
+    if (conf->fonts[0].count == 0)
+        return false;
+
+    const struct config_font *primary = &conf->fonts[0].arr[0];
+    return s->conf_font_px == primary->px_size &&
+        fabsf(s->conf_font_pt - primary->pt_size) < 0.005f;
+}
+
+/*
+ * Re-apply the saved zoom as the uniform adjustment the zoom key
+ * bindings make, so secondary fonts keep their configured relation to
+ * the primary font. Needs the window, for the DPI.
+ */
+static void
+state_apply_zoom(struct terminal *term, const struct saved_state *s)
+{
+    if (!state_font_conf_matches(term, s))
+        return;
+
+    const struct config *conf = term->conf;
+    const struct config_font *primary = &conf->fonts[0].arr[0];
+    const float dpi = conf->dpi_aware ? get_font_dpi(term) : 96.;
+
+    if (s->font_px > 0) {
+        const int conf_px = primary->px_size > 0
+            ? primary->px_size
+            : (int)roundf(primary->pt_size * dpi / 72.);
+        const int delta = s->font_px - conf_px;
+        if (delta == 0)
+            return;
+
+        for (size_t i = 0; i < 4; i++) {
+            for (size_t j = 0; j < conf->fonts[i].count; j++) {
+                struct config_font *font = &term->font_sizes[i][j];
+                const int px = font->px_size > 0
+                    ? font->px_size
+                    : (int)roundf(font->pt_size * dpi / 72.);
+                font->px_size = max(px + delta, 1);
+            }
+        }
+    } else if (s->font_pt > 0) {
+        const float conf_pt = primary->px_size > 0
+            ? primary->px_size * 72. / dpi
+            : primary->pt_size;
+        const float delta = s->font_pt - conf_pt;
+        if (fabsf(delta) < 0.005f)
+            return;
+
+        for (size_t i = 0; i < 4; i++) {
+            for (size_t j = 0; j < conf->fonts[i].count; j++) {
+                struct config_font *font = &term->font_sizes[i][j];
+                const float pt = font->px_size > 0
+                    ? font->px_size * 72. / dpi
+                    : font->pt_size;
+                font->pt_size = fmaxf(pt + delta, 0.f);
+                font->px_size = -1;
+            }
+        }
+    }
 }
 
 bool
@@ -1830,8 +2059,8 @@ term_shutdown(struct terminal *term)
     if (term->shutdown.in_progress)
         return true;
 
-    /* Save window state before tearing anything down */
-    if (term->window != NULL)
+    /* The window's state is saved when its last tab goes */
+    if (term->window != NULL && tab_count(term->window) <= 1)
         state_save(term);
 
     term->shutdown.in_progress = true;
@@ -1860,6 +2089,15 @@ term_shutdown(struct terminal *term)
         fdm_del(term->fdm, term->ptmx);
     else
         close(term->ptmx);
+
+    /*
+     * A terminal sharing its window with other tabs leaves the window
+     * to them: detach now, so the deferred fdm_shutdown() finds no
+     * window to destroy. Must come after the PTY was unregistered
+     * above, which needs the configured window.
+     */
+    if (term->window != NULL && tab_count(term->window) > 1)
+        tab_detach(term);
 
     if (!term->shutdown.client_has_terminated) {
         if (term->slave <= 0) {
@@ -1936,58 +2174,6 @@ sig_alarm(int signo)
     alarm_raised = 1;
 }
 
-void
-term_load_state(struct terminal *term)
-{
-    char *path = state_file_path();
-    if (path == NULL)
-        return;
-
-    FILE *f = fopen(path, "r");
-    free(path);
-    if (f == NULL)
-        return;
-
-    char line[256];
-    int width = 0, height = 0;
-    int maximized = 0;
-    float font_pt = 0;
-    int font_px = 0;
-
-    while (fgets(line, sizeof(line), f)) {
-        if (sscanf(line, "width=%d", &width) == 1) continue;
-        if (sscanf(line, "height=%d", &height) == 1) continue;
-        if (sscanf(line, "maximized=%d", &maximized) == 1) continue;
-        if (sscanf(line, "font_pt=%f", &font_pt) == 1) continue;
-        if (sscanf(line, "font_px=%d", &font_px) == 1) continue;
-    }
-    fclose(f);
-
-    /* Restore font size across all weights */
-    if (font_pt > 0 || font_px > 0) {
-        for (size_t i = 0; i < 4; i++) {
-            const struct config_font_list *fl = &term->conf->fonts[i];
-            for (size_t j = 0; j < fl->count; j++) {
-                if (font_px > 0)
-                    term->font_sizes[i][j].px_size = font_px;
-                else
-                    term->font_sizes[i][j].pt_size = font_pt;
-            }
-        }
-    }
-
-    /* Restore window size and maximized state */
-    if (maximized) {
-        ((struct config *)term->conf)->startup_mode = STARTUP_MAXIMIZED;
-    } else if (width > 0 && height > 0) {
-        term->stashed_width = width;
-        term->stashed_height = height;
-    }
-
-    LOG_INFO("restored window state (w=%d, h=%d, maximized=%d, pt=%.2f, px=%d)",
-             width, height, maximized, font_pt, font_px);
-}
-
 int
 term_destroy(struct terminal *term)
 {
@@ -2018,25 +2204,12 @@ term_destroy(struct terminal *term)
         fdm_del(term->fdm, term->shutdown.terminate_timeout_fd);
 
     if (term->window != NULL) {
-        struct wl_window *win = term->window;
-        int ntabs = tab_count(win);
-
-        if (ntabs <= 1) {
-            /* Last tab - destroy the window */
-            tab_bar_destroy(&win->tab_bar, term->fdm);
-            wayl_win_destroy(win);
-        } else {
-            /* Shut down all other tabs first */
-            tll_foreach(win->tab_bar.tabs, it) {
-                if (it->item.term != term && it->item.term != NULL) {
-                    struct terminal *sibling = it->item.term;
-                    sibling->window = NULL;  /* Prevent recursive window destroy */
-                    term_shutdown(sibling);
-                }
-            }
-            tab_bar_destroy(&win->tab_bar, term->fdm);
-            wayl_win_destroy(win);
-        }
+        /*
+         * Only reached from term_init()'s error path. A running terminal
+         * has already had its window destroyed, or has detached from a
+         * window shared with other tabs, in term_shutdown()/fdm_shutdown().
+         */
+        wayl_win_destroy(term->window);
         term->window = NULL;
     }
 
@@ -3880,9 +4053,8 @@ term_set_window_title(struct terminal *term, const char *title)
     render_refresh_title(term);
     term->window_title_has_been_set = true;
 
-    /* Update tab bar title */
-    if (term->window != NULL)
-        tab_update_title(term->window, term, title);
+    /* A title change is a good moment to re-read the shell's cwd */
+    tab_refresh_title(term);
 }
 
 void
@@ -4018,21 +4190,79 @@ term_bell(struct terminal *term)
     }
 }
 
+const char *
+term_shell_cwd(const struct terminal *term, char *buf, size_t len)
+{
+    if (term->slave > 0) {
+        char proc_path[64];
+        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
+
+        ssize_t n = readlink(proc_path, buf, len - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            return buf;
+        }
+    }
+
+    return term->cwd;
+}
+
+pid_t
+term_foreground_pgid(const struct terminal *term)
+{
+    if (term->ptmx < 0 || term->slave <= 0)
+        return -1;
+
+    const pid_t fg = tcgetpgrp(term->ptmx);
+    const pid_t shell = getpgid(term->slave);
+
+    if (fg <= 0 || shell <= 0 || fg == shell)
+        return -1;
+    return fg;
+}
+
+bool
+term_process_comm(pid_t pid, char *buf, size_t len)
+{
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/comm", (int)pid);
+
+    FILE *f = fopen(path, "re");
+    if (f == NULL)
+        return false;
+
+    const bool ok = fgets(buf, len, f) != NULL;
+    fclose(f);
+    if (!ok)
+        return false;
+
+    const size_t n = strlen(buf);
+    if (n > 0 && buf[n - 1] == '\n')
+        buf[n - 1] = '\0';
+    return true;
+}
+
+bool
+term_foreground_process_matches(const struct terminal *term,
+                                const char *processes)
+{
+    if (processes == NULL || processes[0] == '\0')
+        return false;
+
+    const pid_t fg = term_foreground_pgid(term);
+    if (fg <= 0)
+        return false;
+
+    char comm[256];
+    return term_process_comm(fg, comm, sizeof(comm)) &&
+        tab_activity_process_matches(processes, comm);
+}
+
 bool
 term_spawn_new(const struct terminal *term)
 {
-    /* Read the shell's actual cwd from /proc, falling back to term->cwd */
-    char proc_path[64];
     char cwd_buf[PATH_MAX];
-    const char *cwd = term->cwd;
-    if (term->slave > 0) {
-        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)term->slave);
-        ssize_t len = readlink(proc_path, cwd_buf, sizeof(cwd_buf) - 1);
-        if (len > 0) {
-            cwd_buf[len] = '\0';
-            cwd = cwd_buf;
-        }
-    }
+    const char *cwd = term_shell_cwd(term, cwd_buf, sizeof(cwd_buf));
 
     char *argv[4];
     int argc = 0;

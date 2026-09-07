@@ -8,26 +8,24 @@
 struct terminal;
 struct wl_window;
 struct wl_callback;
+struct wl_surface;
 struct fdm;
-struct reaper;
-struct wayland;
-struct config;
 struct wayl_sub_surface;
 struct buffer_chain;
 
 struct tab {
     struct terminal *term;
     char *title;
-    bool urgent;
     struct wayl_sub_surface *pane;      /* split mode pane surface, NULL in tab mode */
     struct wl_callback *pane_frame_cb;  /* per-pane frame callback in split mode */
     int pane_col;                       /* column in split grid */
     int pane_row;                       /* row in split grid */
 
-    /* Cached foreground process classification for activity pulsing */
+    /* Debounced /proc lookups, driven from the PTY read path */
+    struct timespec last_title_check;
+    struct timespec last_fg_check;
     pid_t cached_fg_pgid;
     bool fg_activity_match;
-    struct timespec last_fg_check;
 };
 
 typedef tll(struct tab) tab_list_t;
@@ -37,14 +35,20 @@ struct tab_bar {
     struct tab *active;
     struct wayl_sub_surface *surface;
     struct buffer_chain *chain;
-    struct fcft_font *font;      /* fixed font for tab bar, not affected by zoom */
-    int height;                  /* fixed height in pixels, set on first tab creation */
+
+    /* Regular font at the configured size (unaffected by zoom), loaded
+     * lazily for the DPI/scale recorded alongside it */
+    struct fcft_font *font;
+    float font_dpi;
+    float font_scale;
+    bool font_sized_by_dpi;
+
     int tab_count;
     int hovered_tab;             /* index of tab under mouse, -1 if none */
     bool split_mode;             /* true when split pane mode is active */
     int split_hovered;           /* index of pane under mouse, -1 if none */
-    int pre_split_lw;            /* saved logical width before split */
-    int pre_split_lh;            /* saved logical height before split */
+    int pre_split_lw;            /* logical width the panes are laid out in */
+    int pre_split_lh;            /* logical height the panes are laid out in */
     int split_cols;              /* number of columns in split grid */
     int split_rows;              /* number of rows in split grid */
     int *tab_x_ends;             /* cumulative x end positions for hit-testing */
@@ -63,6 +67,12 @@ struct tab_bar {
 };
 
 void tab_bar_init(struct tab_bar *tb);
+
+/* Unmap the tab bar and pane surfaces (part of tearing down the window). */
+void tab_bar_unmap(struct tab_bar *tb);
+
+/* Release everything the tab bar owns: tab list, pane surfaces, font,
+ * buffer chain, pulse timer. Called from wayl_win_destroy(). */
 void tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm);
 
 /* Add the initial terminal as the first tab */
@@ -76,6 +86,16 @@ bool tab_new(struct terminal *term);
  * Handles tab list insertion, tab bar subsurface/chain creation, sizing of
  * the new and existing tabs, and switching focus to the new tab. */
 void tab_attach(struct wl_window *win, struct terminal *new_term);
+
+/* Remove a terminal from its window without shutting it down: moves focus
+ * to a neighbor, releases its pane, re-lays out split mode, hides the bar
+ * when one tab remains, and clears term->window. Called by term_shutdown()
+ * for any terminal that shares its window with other tabs. Requires more
+ * than one tab. */
+void tab_detach(struct terminal *term);
+
+/* Shut down every tab in the window. The last one tears the window down. */
+void tab_shutdown_window(struct wl_window *win);
 
 /* Close the active tab. Returns false if it was the last tab. */
 bool tab_close_active(struct terminal *term);
@@ -102,9 +122,8 @@ void tab_prev(struct terminal *term);
 /* Switch to a specific tab by index (0-based). */
 void tab_switch_to(struct wl_window *win, int index);
 
-/* Update the title for the tab containing the given terminal. */
-void tab_update_title(struct wl_window *win, struct terminal *term,
-                      const char *title);
+/* Re-read the terminal's tab title from the shell's cwd. */
+void tab_refresh_title(struct terminal *term);
 
 /* Get the tab index for a given terminal. Returns -1 if not found. */
 int tab_index_of(const struct wl_window *win, const struct terminal *term);
@@ -112,29 +131,38 @@ int tab_index_of(const struct wl_window *win, const struct terminal *term);
 /* Get the number of tabs. */
 int tab_count(const struct wl_window *win);
 
-/* Refresh all tab titles from /proc/<pid>/cwd. */
-void tab_bar_refresh_titles(struct wl_window *win, struct terminal *term);
-
 /* Enter split pane mode - show all tabs as live panes. */
 void tab_split_enter(struct wl_window *win);
 
 /* Exit split pane mode - return to tabbed view. */
 void tab_split_exit(struct wl_window *win);
 
+/* Re-lay out the panes for a new window size (logical pixels). */
+void tab_split_resize(struct wl_window *win, int logical_width,
+                      int logical_height);
+
 /* Switch focus to a specific pane by index in split mode. */
 void tab_split_focus(struct wl_window *win, int index);
+
+/* Logical position of the active pane in split mode. Returns false (and
+ * zeroes) when not in split mode. */
+bool tab_split_active_pane_origin(const struct wl_window *win, int *x, int *y);
 
 /* Get per-pane frame callback pointer for a terminal in split mode. */
 struct wl_callback **tab_pane_frame_cb(struct wl_window *win,
                                        struct terminal *term);
 
+/* The topmost tab-owned subsurface (a pane in split mode, else the tab
+ * bar), or NULL. Overlays are stacked above it. */
+struct wl_surface *tab_topmost_surface(const struct wl_window *win);
+
 /* Get the tab bar height in pixels (0 if hidden). */
 int tab_bar_height(const struct terminal *term);
 
-/* Called from the PTY read path when a terminal produces output. Re-checks
- * (with debounce) whether the foreground process is configured for activity
- * indication, and arms the tab-bar pulse timer if so. */
-void tab_activity_on_output(struct terminal *term);
+/* Called from the PTY read path when a terminal produces output. Refreshes
+ * the tab title and the foreground-process classification (both debounced)
+ * and arms the tab-bar pulse timer when a configured process is active. */
+void tab_on_output(struct terminal *term);
 
 /* Returns true if the tab's foreground process is configured for activity
  * indication and there has been recent PTY output. Updates the cached

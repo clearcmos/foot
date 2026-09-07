@@ -898,6 +898,27 @@ bool term_font_dpi_changed(struct terminal *term, float old_scale);
 void term_font_subpixel_changed(struct terminal *term);
 int term_font_baseline(const struct terminal *term);
 
+/* The regular font at its configured size (ignoring zoom), for the
+ * terminal's current DPI and scale. Caller owns the returned font. */
+struct fcft_font *term_load_font_at_config_size(struct terminal *term);
+
+/* The shell's current working directory from /proc, falling back to the
+ * OSC 7 reported cwd. Returns NULL if neither is known. */
+const char *term_shell_cwd(
+    const struct terminal *term, char *buf, size_t len);
+
+/* Process group in the foreground of the PTY, or -1 if there is none or
+ * it is the shell itself. */
+pid_t term_foreground_pgid(const struct terminal *term);
+
+/* Reads /proc/<pid>/comm (without the trailing newline). */
+bool term_process_comm(pid_t pid, char *buf, size_t len);
+
+/* True if a foreground process other than the shell is running and its
+ * name is in the comma-separated list. */
+bool term_foreground_process_matches(
+    const struct terminal *term, const char *processes);
+
 int term_pt_or_px_as_pixels(
     const struct terminal *term, const struct pt_or_px *pt_or_px);
 
@@ -909,7 +930,6 @@ void term_damage_rows_in_view(struct terminal *term, int start, int end);
 
 void term_damage_all(struct terminal *term);
 void term_damage_view(struct terminal *term);
-void term_load_state(struct terminal *term);
 
 void term_damage_cursor(struct terminal *term);
 void term_damage_margins(struct terminal *term);

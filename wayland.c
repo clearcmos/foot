@@ -954,9 +954,8 @@ static void
 xdg_toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel)
 {
     struct wl_window *win = data;
-    struct terminal *term = win->term;
     LOG_DBG("xdg-toplevel: close");
-    term_shutdown(term);
+    tab_shutdown_window(win);
 }
 
 #if defined(XDG_TOPLEVEL_CONFIGURE_BOUNDS_SINCE_VERSION)
@@ -1127,10 +1126,14 @@ xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
 
     bool resized;
     if (win->tab_bar.split_mode) {
-        /* In split mode, don't resize individual terminals to window size.
-         * Just handle focus changes. TODO: recalculate pane layout on
-         * actual window resize. */
-        resized = false;
+        /*
+         * The panes, not the terminals, follow the window size. Pane
+         * renders never commit the parent surface, so commit it here
+         * to complete the ack.
+         */
+        tab_split_resize(win, new_width, new_height);
+        wl_surface_commit(win->surface.surf);
+        resized = true;
     } else {
         resized = render_resize(term, new_width, new_height, opts);
     }
@@ -2228,6 +2231,9 @@ wayl_win_destroy(struct wl_window *win)
         }
     }
 
+    /* Tab bar and split panes */
+    tab_bar_unmap(&win->tab_bar);
+
     wayl_roundtrip(win->term->wl);
 
         /* Main window */
@@ -2245,6 +2251,7 @@ wayl_win_destroy(struct wl_window *win)
 
     render_wait_for_preapply_damage(term);
 
+    tab_bar_destroy(&win->tab_bar, term->wl->fdm);
     csd_destroy(win);
     wayl_win_subsurface_destroy(&win->search);
     wayl_win_subsurface_destroy(&win->scrollback_indicator);

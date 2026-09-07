@@ -61,33 +61,36 @@ GitHub Actions and Python dependencies monthly.
 
 ## Tab support (custom feature)
 
-`tab.c/h` - tab list management, active/inactive switching, process teardown
-on close, and per-tab title tracking. `tab-close.c/h` contains the testable
-focus-selection and shutdown-before-detach helpers.
+`tab.c/h` - tab list management, active/inactive switching, detaching a
+terminal from its shared window on shutdown, and per-tab title tracking.
+`tab-close.c/h` contains the unit-tested focus-selection helper.
 
 Key implementation details:
-- Tab bar renders as a Wayland subsurface positioned at (0,0), drawn in `render_tab_bar()` in `render.c`.
+- Tab bar renders as a Wayland subsurface positioned at (0,0), drawn in `render_tab_bar()` in `render.c`. The main surface already sits below any CSD title bar, so no title offset is applied.
 - `tab_bar_height()` returns physical pixels (`roundf(20 * scale)`). This value must be included in `set_size_from_grid()` and subtracted from available height in `render_resize()` margin calculations.
-- Tab titles show the shell's current working directory, read from `/proc/<pid>/cwd` via `title_from_cwd()` in `tab.c`. `$HOME` is collapsed to `~`. Titles refresh on every render cycle via `tab_bar_refresh_titles()`.
+- The bar's font is the regular font at its configured size (zoom-independent), loaded by `term_load_font_at_config_size()` and reloaded lazily in `render_tab_bar()` when the DPI or scale changes.
+- Tab titles show the shell's current working directory, read from `/proc/<pid>/cwd` via `term_shell_cwd()`. `$HOME` is collapsed to `~`. Titles are refreshed from `tab_on_output()` on PTY output (debounced to 250 ms, a cwd change always comes with a new prompt), on OSC 7, and on window title changes. Nothing polls `/proc` from the render path.
 - Tab widths are equal, dividing the full bar width evenly (`buf_width / tab_count`). Remainder pixels go to leftmost tabs. Cumulative x positions stored in `tab_bar.tab_x_ends` for mouse hit-testing in `input.c`.
 - Each tab is enclosed in a 1px border (all four sides) drawn with foreground color at `0x4000` alpha.
 - New tabs inherit the parent's `font_sizes` array so zoom level carries over.
-- `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab.
+- `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab. It also clears the old tab's `render.pending` flags and destroys the window's in-flight frame callback: `frame_callback()` only services its own terminal, so a leftover callback would draw the old tab and strand the new tab's render.
 - Grid vertical margin is anchored to the top (`pad_top`, not centered) to prevent text jumping during zoom.
-- Closing a tab calls `term_shutdown()` while the terminal still references the shared window, then clears `term->window` before the deferred shutdown callback. This closes the PTY/process without allowing that callback to destroy the window used by the remaining tabs. Closed tabs are not retained or recoverable.
+- Shutdown of a tab sharing its window goes through one choke point: `term_shutdown()` unregisters the PTY (which needs the configured window), then calls `tab_detach()` to remove the tab, move focus, and clear `term->window`, so the deferred `fdm_shutdown()` finds no window to destroy. This covers Ctrl+W, the context menu, the shell exiting, and `footclient` teardown alike. Closing the window from the compositor (`xdg_toplevel_close`) calls `tab_shutdown_window()`, which shuts every tab down; the last one destroys the window. `wayl_win_destroy()` unmaps and frees the tab bar and panes via `tab_bar_unmap()` / `tab_bar_destroy()`. Closed tabs are not retained or recoverable.
 - The tab activity pulse is process-agnostic infrastructure. `[tab-bar]`
   controls whether it is enabled, the comma-separated foreground process
   names to match, its RGB color, and how recently the PTY must have produced
   output. Defaults preserve the original Claude indicator (`claude`, green
   `00cc33`, 700 ms). `tab-activity.c/h` provides exact process-list matching;
-  `tab.c` reads the foreground process from `/proc`, and `render.c` draws the
-  pulse.
+  `term_foreground_pgid()` / `term_process_comm()` in `terminal.c` read the
+  foreground process from `/proc`, and `render.c` draws the pulse. The pulse
+  timer only marks the bar dirty; the render hook picks that up without a
+  grid render.
 
-Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev). Also Ctrl+PageDown/PageUp and arrow keys for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement. F1 shows the keyboard shortcuts help card.
+Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev). Also Ctrl+PageDown/PageUp and Shift+Left/Right for next/prev. Ctrl+E toggles split pane mode. Ctrl+Left/Right sends ESC b/f for word movement. PageUp/PageDown scroll the scrollback by a page and Shift+Home/Shift+End jump to its top/bottom (bare Home/End reach the shell). F1 shows the keyboard shortcuts help card; keep its entry table in `render_overlay()` in sync with the default bindings in `config.c`.
 
-Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab unless the process is whitelisted. The whitelist is a `passthrough` array in `input.c` `BIND_ACTION_TAB_CLOSE` handler (currently: `nano`). Process name is read from `/proc/<pgid>/comm`. After closing, focus moves to the right neighbor; if the closed tab was rightmost, focus falls back to the left neighbor.
+Ctrl+W close behavior: when a subprocess is running, Ctrl+W still closes the tab unless the process name is listed in `[tab-bar] close-passthrough-processes` (default `nano`), in which case the key is sent to the application. The check is `term_foreground_process_matches()`. After closing, focus moves to the right neighbor; if the closed tab was rightmost, focus falls back to the left neighbor.
 
-Ctrl+A select-all behavior: when a subprocess is running whose name matches the passthrough list in `BIND_ACTION_SELECT_ALL` (currently: `claude`), Ctrl+A passes through to the application instead of triggering select-all + copy. Same `/proc/<pgid>/comm` check pattern as Ctrl+W.
+Ctrl+A select-all behavior: when the foreground process name is listed in `[main] select-all-passthrough-processes` (default `claude`), Ctrl+A passes through to the application instead of triggering select-all + copy. Same check as Ctrl+W.
 
 `footclient --tab` (alias `-b`): adds a new tab to an existing foot window rather than opening a new window. Carries the same payload as a normal spawn (cwd, argv, envp, overrides) plus a new `as_tab:1` bit on `struct client_data` in `client-protocol.h` (consumed one of the 5 reserved bits, struct size unchanged). Server-side handling lives in `fdm_client()` in `server.c`: when `as_tab` is set, it picks a target window (focused terminal's `wl_window` first, else `tll_front(wayl->terms)->window`, else NULL which falls back to a normal new-window spawn), passes it to `term_init()`, then calls `tab_attach()`. `tab_attach()` is the post-`term_init` half of the original `tab_new()` exposed in `tab.h`; the Ctrl+T path now goes through `term_init() + tab_attach()` as well.
 
@@ -105,13 +108,14 @@ Key implementation details:
 - `do_tab_switch()` does not suppress rendering or resize terminals in split mode, since all panes render independently.
 - Click-to-focus: clicking a pane switches focus (hover just tracks `split_hovered` for hit-testing). `do_tab_switch()` redraws both old and new panes to update dim state.
 - Inactive panes are dimmed with a semi-transparent black overlay applied at the end of `grid_render()`.
-- Window geometry (`xdg_surface_set_window_geometry`) and configure events are suppressed in split mode to prevent the compositor from resizing panes to full window size.
-- Pane dimensions use the pre-split content area (tab bar space is not reclaimed) to match the window geometry the compositor knows about.
-- Creating a new tab or closing down to 1 tab exits split mode automatically.
+- `render_resize()` skips the window geometry in split mode (pane sizes are not window sizes). A configure event in split mode goes to `tab_split_resize()`, which re-lays out the panes for the new size via `split_layout()` and sets the full-window geometry through `render_set_window_geometry()`.
+- Pane dimensions use the pre-split content area (tab bar space is not reclaimed). The last column and row absorb the integer-division remainder so panes cover the window.
+- Overlays (help card, context menu, flash) are one subsurface per window. `overlay_place()` stacks it above the topmost pane (or the tab bar) and positions it over the active pane; flash messages are additionally drawn into each pane buffer by `render_flash_message()`.
+- Creating a new tab or closing down to 1 tab exits split mode automatically; closing one of three or more panes re-lays out the rest.
 
 ## Mouse interaction (custom features)
 
-- URLs are underlined on hover. `urls_hover_update()` / `urls_hover_clear()` in `url-mode.c` manage a cached URL list (`term->url_hover`) and toggle `cell->attrs.url` on the live grid. Cache auto-invalidates on scroll (view offset change).
+- URLs are underlined on hover. `urls_hover_update()` / `urls_hover_clear()` in `url-mode.c` manage a cached URL list (`term->url_hover`) and toggle `cell->attrs.url` on the live grid. The cache is dropped on scroll (view offset change) and by `fdm_ptmx()` whenever PTY output changes the grid; the next pointer motion rebuilds it.
 - Ctrl+Click opens URLs under the cursor in the default browser. Uses `urls_collect()` to find regex and OSC-8 URLs, then `urls_open_at_position()` in `url-mode.c` launches via the configured URL launcher with XDG activation token support.
 - Right-click with an active selection copies the selected text to clipboard and deselects. No flash notification -- the deselection itself is the feedback.
 - Flash notification positioning supports `term->flash.use_mouse_pos` to anchor the pill at the mouse cursor (top-right) instead of screen center. Currently only used by the Ctrl+A select-all flash (centered).
@@ -119,6 +123,21 @@ Key implementation details:
 ## Help overlay (custom feature)
 
 F1 toggles a keyboard shortcuts help card rendered as an `OVERLAY_HELP` overlay in `render_overlay()` in `render.c`. The card uses a two-column layout (key + description) with fixed pixel column positions for alignment. State is tracked via `term->help_visible` in `terminal.h`. Any keypress dismisses the overlay (handled in `key_press_release()` in `input.c` before normal binding dispatch). The `BIND_ACTION_SHOW_HELP` action is defined in `key-binding.h` with default F1 binding in `config.c`.
+
+## Window state persistence (custom feature)
+
+`state_save()` / `state_load()` in `terminal.c` keep the last floating window
+size, maximized state, and zoom level in `$XDG_STATE_HOME/foot/state`
+(default `~/.local/state/foot/state`). State is written when a window's last
+tab shuts down and read in `term_init()` for new windows only (tabs inherit
+from their window). Restored values are fallbacks for what the configuration
+leaves alone: the file records the configured window size and primary font
+size in effect when it was written, and each value is applied only while that
+configuration is unchanged. Editing `initial-window-size-*` or the font size
+in `foot.ini`, or passing `-w`/`-W`, therefore takes effect immediately.
+Zoom is re-applied as the same uniform adjustment the zoom bindings make
+(`state_apply_zoom()`), so secondary fonts keep their configured relation to
+the primary font. The config struct is never mutated.
 
 ## Bell command ${pty} template (legacy compatibility)
 

@@ -100,9 +100,6 @@ execute_binding(struct seat *seat, struct terminal *term,
         return true;
 
     case BIND_ACTION_SCROLLBACK_UP_PAGE:
-        LOG_INFO("scrollback_up_page: term=%p grid==normal=%d rows=%d view=%d offset=%d",
-                 (void *)term, term->grid == &term->normal, term->rows,
-                 term->grid->view, term->grid->offset);
         if (term->grid == &term->normal) {
             cmd_scrollback_up(term, term->rows);
             return true;
@@ -238,41 +235,17 @@ execute_binding(struct seat *seat, struct terminal *term,
         tab_new(term);
         return true;
 
-    case BIND_ACTION_TAB_CLOSE: {
-        pid_t fg_pgid = tcgetpgrp(term->ptmx);
-        pid_t shell_pgid = getpgid(term->slave);
-        if (fg_pgid != -1 && shell_pgid != -1 && fg_pgid != shell_pgid) {
-            /* Subprocess running - only pass through for whitelisted programs */
-            static const char *passthrough[] = {"nano", NULL};
-            char comm_path[64];
-            char comm[256] = {0};
-            snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)fg_pgid);
-            FILE *f = fopen(comm_path, "r");
-            if (f != NULL) {
-                if (fgets(comm, sizeof(comm), f) != NULL) {
-                    /* Strip trailing newline */
-                    size_t len = strlen(comm);
-                    if (len > 0 && comm[len - 1] == '\n')
-                        comm[len - 1] = '\0';
-                }
-                fclose(f);
-            }
-            bool pass = false;
-            for (const char **p = passthrough; *p != NULL; p++) {
-                if (strcmp(comm, *p) == 0) {
-                    pass = true;
-                    break;
-                }
-            }
-            if (pass)
-                return false;  /* Whitelisted process - pass Ctrl+W through */
+    case BIND_ACTION_TAB_CLOSE:
+        if (term_foreground_process_matches(
+                term, term->conf->tab_bar.close_passthrough_processes))
+        {
+            return false;  /* Configured application gets the key instead */
         }
         if (!tab_close_active(term)) {
             /* Last tab - close window */
             term_shutdown(term);
         }
         return true;
-    }
 
     case BIND_ACTION_TAB_NEXT:
         if (tab_count(term->window) <= 1)
@@ -322,26 +295,10 @@ execute_binding(struct seat *seat, struct terminal *term,
         return true;
 
     case BIND_ACTION_SELECT_ALL: {
-        pid_t fg_pgid = tcgetpgrp(term->ptmx);
-        pid_t shell_pgid = getpgid(term->slave);
-        if (fg_pgid != -1 && shell_pgid != -1 && fg_pgid != shell_pgid) {
-            static const char *passthrough[] = {"claude", NULL};
-            char comm_path[64];
-            char comm[256] = {0};
-            snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)fg_pgid);
-            FILE *f = fopen(comm_path, "r");
-            if (f != NULL) {
-                if (fgets(comm, sizeof(comm), f) != NULL) {
-                    size_t len = strlen(comm);
-                    if (len > 0 && comm[len - 1] == '\n')
-                        comm[len - 1] = '\0';
-                }
-                fclose(f);
-            }
-            for (const char **p = passthrough; *p != NULL; p++) {
-                if (strcmp(comm, *p) == 0)
-                    return false;  /* Pass through to application */
-            }
+        if (term_foreground_process_matches(
+                term, term->conf->select_all_passthrough_processes))
+        {
+            return false;  /* Configured application gets the key instead */
         }
         /* Copy entire scrollback + visible content to clipboard */
         char *text = NULL;
@@ -2661,7 +2618,6 @@ wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
     {
         win->tab_bar.hovered_tab = -1;
         win->tab_bar.dirty = true;
-        render_refresh(term);
     }
 
     if (touch_is_active(seat))
@@ -2792,13 +2748,22 @@ wl_pointer_leave(void *data, struct wl_pointer *wl_pointer,
             selection_finalize(seat, old_moused, seat->pointer.serial);
             break;
 
+        case TERM_SURF_TAB_BAR:
+            /* The pointer left the window from the bar: drop the hover */
+            if (old_moused->window != NULL &&
+                old_moused->window->tab_bar.hovered_tab >= 0)
+            {
+                old_moused->window->tab_bar.hovered_tab = -1;
+                old_moused->window->tab_bar.dirty = true;
+            }
+            break;
+
         case TERM_SURF_NONE:
         case TERM_SURF_TITLE:
         case TERM_SURF_BORDER_LEFT:
         case TERM_SURF_BORDER_RIGHT:
         case TERM_SURF_BORDER_TOP:
         case TERM_SURF_BORDER_BOTTOM:
-        case TERM_SURF_TAB_BAR:
             break;
         }
 
@@ -2923,9 +2888,9 @@ wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
                 }
             }
             if (hovered != tb->hovered_tab) {
+                /* Bar-only change: the render hook picks the flag up */
                 tb->hovered_tab = hovered;
                 tb->dirty = true;
-                render_refresh(term);
             }
         }
         break;

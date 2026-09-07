@@ -471,8 +471,7 @@ osc_set_pwd(struct terminal *term, char *string)
         term->cwd = path;
 
         /* Update tab title to reflect new cwd */
-        if (term->window != NULL)
-            tab_update_title(term->window, term, path);
+        tab_refresh_title(term);
     } else
         free(path);
 

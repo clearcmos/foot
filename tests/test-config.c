@@ -486,6 +486,8 @@ test_section_main(void)
     test_string(&ctx, &parse_section_main, "utmp-helper", &conf.utmp_helper_path);
 
     test_c32string(&ctx, &parse_section_main, "word-delimiters", &conf.word_delimiters);
+    test_string(&ctx, &parse_section_main, "select-all-passthrough-processes",
+                &conf.select_all_passthrough_processes);
 
     test_boolean(&ctx, &parse_section_main, "login-shell", &conf.login_shell);
     test_boolean(&ctx, &parse_section_main, "box-drawings-uses-font-glyphs", &conf.box_drawings_uses_font_glyphs);
@@ -610,6 +612,9 @@ test_section_tab_bar(void)
     test_uint32(
         &ctx, &parse_section_tab_bar, "activity-pulse-quiet-ms",
         &conf.tab_bar.activity_pulse_quiet_ms);
+    test_string(
+        &ctx, &parse_section_tab_bar, "close-passthrough-processes",
+        &conf.tab_bar.close_passthrough_processes);
 
     config_free(&conf);
 }

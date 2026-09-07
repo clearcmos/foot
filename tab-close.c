@@ -1,9 +1,5 @@
 #include "tab-close.h"
 
-#include <stddef.h>
-
-#include "terminal.h"
-
 int
 tab_close_focus_target(int tab_count, int closing_index, int active_index)
 {
@@ -20,12 +16,4 @@ tab_close_focus_target(int tab_count, int closing_index, int active_index)
     return closing_index + 1 < tab_count
         ? closing_index + 1
         : closing_index - 1;
-}
-
-bool
-tab_shutdown_and_detach(struct terminal *term, tab_shutdown_fn shutdown)
-{
-    bool ret = shutdown(term);
-    term->window = NULL;
-    return ret;
 }

@@ -466,6 +466,15 @@ empty string to be set, but it must be quoted: *KEY=""*
 	Clipboard target to automatically copy selected text to. One of
 	*none*, *primary*, *clipboard* or *both*. Default: _primary_.
 
+*select-all-passthrough-processes*
+	Comma-separated list of foreground process names for which the
+	*select-all* key binding is passed to the application instead of
+	copying the whole scrollback to the clipboard. Names are matched
+	exactly against the operating system's process name. Whitespace
+	around names is ignored.
+
+	Default: _claude_.
+
 *workers*
 	Number of threads to use for rendering. Set to 0 to disable
 	multithreading. Default: the number of available logical CPUs
@@ -848,6 +857,14 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 	have produced terminal output to be considered active.
 
 	Default: _700_.
+
+*close-passthrough-processes*
+	Comma-separated list of foreground process names for which the
+	*tab-close* key binding is passed to the application instead of
+	closing the tab. Names are matched exactly against the operating
+	system's process name. Whitespace around names is ignored.
+
+	Default: _nano_.
 
 # SECTION: scrollback
 

@@ -226,6 +226,7 @@ struct config {
     char *app_id;
     char *toplevel_tag;
     char32_t *word_delimiters;
+    char *select_all_passthrough_processes;
     bool login_shell;
     bool locked_title;
 
@@ -425,6 +426,7 @@ struct config {
         char *activity_pulse_processes;
         uint32_t activity_pulse_color;
         uint32_t activity_pulse_quiet_ms;
+        char *close_passthrough_processes;
     } tab_bar;
 
     env_var_list_t env_vars;

@@ -2,7 +2,6 @@
 #include <stdio.h>
 
 #include "../tab-close.h"
-#include "../terminal.h"
 
 #define CHECK(condition)                                                  \
     do {                                                                  \
@@ -52,50 +51,8 @@ test_focus_target(void)
     return true;
 }
 
-static struct wl_window *expected_window;
-static bool shutdown_result;
-static int shutdown_calls;
-
-static bool
-shutdown_stub(struct terminal *term)
-{
-    CHECK(term->window == expected_window);
-    shutdown_calls++;
-    return shutdown_result;
-}
-
-static bool
-test_shutdown_order(void)
-{
-    struct terminal term = {0};
-    term.window = (struct wl_window *)&term;
-    expected_window = term.window;
-
-    /* Regression: shutdown must see the configured window so it unregisters
-     * the PTY before the tab detaches from the shared Wayland window. */
-    shutdown_result = true;
-    shutdown_calls = 0;
-    CHECK(tab_shutdown_and_detach(&term, &shutdown_stub));
-    CHECK(shutdown_calls == 1);
-    CHECK(term.window == NULL);
-
-    /* A failed asynchronous setup must still detach the closing tab so its
-     * deferred cleanup cannot destroy the window owned by remaining tabs. */
-    term.window = expected_window;
-    shutdown_result = false;
-    shutdown_calls = 0;
-    CHECK(!tab_shutdown_and_detach(&term, &shutdown_stub));
-    CHECK(shutdown_calls == 1);
-    CHECK(term.window == NULL);
-
-    return true;
-}
-
 int
 main(void)
 {
-    if (!test_focus_target() || !test_shutdown_order())
-        return 1;
-
-    return 0;
+    return test_focus_target() ? 0 : 1;
 }
