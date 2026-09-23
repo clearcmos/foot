@@ -335,6 +335,7 @@ executable(
   'slave.c', 'slave.h',
   'tab-activity.c', 'tab-activity.h',
   'tab-close.c', 'tab-close.h',
+  'tab-pin.c', 'tab-pin.h',
   'tab.c', 'tab.h',
   'spawn.c', 'spawn.h',
   'tokenize.c', 'tokenize.h',

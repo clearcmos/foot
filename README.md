@@ -8,6 +8,7 @@ This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom mo
 
 - Multi-tab support: tab bar, per-tab cwd titles, process teardown on close, right-click context menu, `footclient --tab`
 - Configurable foreground-process activity pulse in the tab bar
+- Pinned tabs (Ctrl+D): compact square tabs kept at the far left
 - Split pane mode (Ctrl+E): all tabs shown as simultaneously visible panes
 - Keyboard shortcuts help overlay (F1)
 - Mouse extras: URL underline on hover, Ctrl+Click to open URLs, right-click copies the active selection
@@ -92,7 +93,10 @@ This fork adds multi-tab support:
 * Closing a tab, or its shell exiting, shuts down that tab only; closed tabs
   cannot be restored. Closing the window closes every tab.
 * Tab bar with equal-width tabs showing the shell's current path (~/...)
-* Right-click on a tab for Close Tab / Duplicate Tab
+* Ctrl+D pins or unpins the active tab: pinned tabs are unlabeled squares
+  grouped at the far left, and tab cycling still visits them in bar order.
+  Ctrl+D is therefore not sent to the shell as end-of-file.
+* Right-click on a tab to close it
 * Tabs inherit the current zoom level
 * Mouse hover and click on tabs to switch
 * Ctrl+E toggles a split view showing every tab as a live pane

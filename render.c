@@ -44,6 +44,7 @@
 #include "url-mode.h"
 #include "util.h"
 #include "tab.h"
+#include "tab-pin.h"
 #include "xmalloc.h"
 
 #define TIME_SCROLL_DAMAGE 0
@@ -2390,6 +2391,7 @@ render_overlay(struct terminal *term)
             {"Ctrl+Shift+Tab",    "Previous tab"},
             {"Shift+Right/Left",  "Next/prev tab"},
             {"Ctrl+E",            "Toggle split pane"},
+            {"Ctrl+D",            "Pin/unpin tab"},
             {"Ctrl+N",            "New window"},
             {NULL, NULL},
             {"Ctrl+Shift+C",      "Copy"},
@@ -2504,7 +2506,7 @@ render_overlay(struct terminal *term)
         const enum fcft_subpixel subpixel = term->font_subpixel;
         struct tab_bar *tb = &term->window->tab_bar;
 
-        static const char *const items[] = {"Close Tab", "Duplicate Tab"};
+        static const char *const items[] = {"Close Tab"};
         const int item_count = ALEN(items);
 
         const int font_height = font_height_of(font);
@@ -3025,15 +3027,17 @@ render_tab_bar(struct terminal *term)
 
     const int text_margin = font->max_advance.x / 2;
 
-    /* Equal-width tabs filling the entire bar */
+    /* Square pinned tabs at the far left; the rest share the bar evenly */
     int *tab_widths = xmalloc(tb->tab_count * sizeof(tab_widths[0]));
     {
-        const int base_width = buf_width / tb->tab_count;
-        int remainder = buf_width % tb->tab_count;
-
-        for (int j = 0; j < tb->tab_count; j++) {
-            tab_widths[j] = base_width + (j < remainder ? 1 : 0);
+        int pinned_count = 0;
+        tll_foreach(tb->tabs, it) {
+            if (it->item.pinned)
+                pinned_count++;
         }
+
+        tab_pin_widths(buf_width, tb->tab_count, pinned_count,
+                       buf_height, tab_widths);
 
         /* Store cumulative x positions for mouse hit-testing */
         free(tb->tab_x_ends);
@@ -3100,9 +3104,9 @@ render_tab_bar(struct terminal *term)
             tab_fg = 0xff000000;
         }
 
-        /* Tab label, centered and clipped to the tab */
+        /* Tab label, centered and clipped to the tab; pinned tabs have none */
         const char *title = it->item.title != NULL ? it->item.title : "shell";
-        char32_t *title32 = ambstoc32(title);
+        char32_t *title32 = it->item.pinned ? NULL : ambstoc32(title);
         if (title32 != NULL) {
             pixman_color_t fg = color_hex_to_pixman(tab_fg, gamma_correct);
             const int width = text_width(font, term->font_subpixel, title32);

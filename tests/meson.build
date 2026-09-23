@@ -14,6 +14,13 @@ tab_close_test = executable(
 
 test('tab-close', tab_close_test)
 
+tab_pin_test = executable(
+  'test-tab-pin',
+  'test-tab-pin.c',
+  '../tab-pin.c')
+
+test('tab-pin', tab_pin_test)
+
 tab_activity_test = executable(
   'test-tab-activity',
   'test-tab-activity.c',

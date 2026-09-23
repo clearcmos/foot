@@ -268,6 +268,9 @@ execute_binding(struct seat *seat, struct terminal *term,
         }
         return true;
 
+    case BIND_ACTION_TAB_PIN:
+        return tab_toggle_pin(term->window);
+
     case BIND_ACTION_CURSOR_LEFT:
         if (term->cursor_keys_mode == CURSOR_KEYS_APPLICATION)
             term_to_slave(term, "\x1bOD", 3);

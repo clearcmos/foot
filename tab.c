@@ -20,6 +20,7 @@
 #include "shm.h"
 #include "tab-activity.h"
 #include "tab-close.h"
+#include "tab-pin.h"
 #include "terminal.h"
 #include "util.h"
 #include "vt.h"
@@ -509,7 +510,7 @@ tab_ctx_menu_show(struct terminal *term, int target_tab, int x, int y)
     tb->ctx_menu_x = x;
     tb->ctx_menu_y = y;
     tb->ctx_menu_hovered_item = -1;
-    tb->ctx_menu_item_count = 2;  /* Close Tab, Duplicate Tab */
+    tb->ctx_menu_item_count = 1;  /* Close Tab */
     tb->ctx_menu_w = 0;           /* recomputed at render time */
     tb->ctx_menu_h = 0;
     render_refresh(term);
@@ -528,9 +529,8 @@ tab_ctx_menu_dismiss(struct terminal *term)
     /*
      * Eagerly unmap the overlay subsurface so the menu disappears even
      * when the next render targets a different term. This matters for
-     * the action items: "Close Tab" and "Duplicate Tab" both switch
-     * focus, and the new active term's `render.last_overlay_style` is
-     * usually OVERLAY_NONE, so its render_overlay() wouldn't know to
+     * the action item: "Close Tab" can switch focus, and the new
+     * active term's `render.last_overlay_style` is usually OVERLAY_NONE, so its render_overlay() wouldn't know to
      * unmap. Without this, stale menu pixels remain on the overlay.
      */
     if (win->overlay.surface.surf != NULL) {
@@ -585,10 +585,6 @@ tab_ctx_menu_handle_click(struct terminal *term, int x, int y)
     int item = ctx_menu_item_at(tb, x, y);
     int target_tab = tb->ctx_menu_target_tab;
 
-    /* Resolve the target before dismissing/closing: indices may shift */
-    struct tab *target = tab_at_index(win, target_tab);
-    struct terminal *target_term = target != NULL ? target->term : NULL;
-
     tab_ctx_menu_dismiss(term);
 
     switch (item) {
@@ -597,11 +593,6 @@ tab_ctx_menu_handle_click(struct terminal *term, int x, int y)
 
     case 0:  /* Close Tab */
         tab_close_at_index(win, target_tab);
-        break;
-
-    case 1:  /* Duplicate Tab */
-        if (target_term != NULL)
-            tab_new(target_term);
         break;
     }
 
@@ -656,6 +647,54 @@ tab_prev(struct terminal *term)
 
     /* Wrap to last */
     do_tab_switch(win, &tll_back(tb->tabs));
+}
+
+bool
+tab_toggle_pin(struct wl_window *win)
+{
+    struct tab_bar *tb = &win->tab_bar;
+    if (tb->split_mode || tb->active == NULL)
+        return false;
+
+    int pinned_count = 0;
+    tll_foreach(tb->tabs, it) {
+        if (it->item.pinned)
+            pinned_count++;
+    }
+
+    /* Moving the tab reallocates its list node: re-find it afterwards */
+    struct terminal *active = tb->active->term;
+    struct tab moved = *tb->active;
+    const int target = tab_pin_toggle_target(pinned_count, moved.pinned);
+    moved.pinned = !moved.pinned;
+
+    tll_foreach(tb->tabs, it) {
+        if (&it->item == tb->active) {
+            tll_remove(tb->tabs, it);
+            break;
+        }
+    }
+
+    bool inserted = false;
+    int i = 0;
+    tll_foreach(tb->tabs, it) {
+        if (i++ == target) {
+            tll_insert_before(tb->tabs, it, moved);
+            inserted = true;
+            break;
+        }
+    }
+    if (!inserted)
+        tll_push_back(tb->tabs, moved);
+
+    tb->active = find_tab(win, active);
+    tb->hovered_tab = -1;
+    tb->dirty = true;
+
+    /* The bar is a synchronized subsurface: its commit only shows once
+     * the window surface commits, so render the grid too */
+    render_refresh(active);
+    return true;
 }
 
 void

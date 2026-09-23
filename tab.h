@@ -20,6 +20,7 @@ struct tab {
     struct wl_callback *pane_frame_cb;  /* per-pane frame callback in split mode */
     int pane_col;                       /* column in split grid */
     int pane_row;                       /* row in split grid */
+    bool pinned;                        /* kept in the group at the far left */
 
     /* Debounced /proc lookups, driven from the PTY read path */
     struct timespec last_title_check;
@@ -118,6 +119,12 @@ void tab_next(struct terminal *term);
 
 /* Switch to the previous tab. Wraps around. */
 void tab_prev(struct terminal *term);
+
+/* Pin or unpin the active tab. Pinned tabs sit together at the far left
+ * of the bar: pinning moves the tab to the end of that group, unpinning
+ * to the first slot after it. Returns false in split mode, where the
+ * pane order is fixed. */
+bool tab_toggle_pin(struct wl_window *win);
 
 /* Switch to a specific tab by index (0-based). */
 void tab_switch_to(struct wl_window *win, int index);
