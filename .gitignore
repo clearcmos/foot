@@ -1,8 +1,15 @@
+# Meson build directories (build/ is the documented one; build-* covers
+# variants such as build-ci and build-coverage)
 /bld/
 /build/
 /build-*/
+# makepkg run in the checkout: pkg/ and src/ are its staging trees and
+# foot-custom/ is the bare clone of the PKGBUILD source
 /pkg/
 /src/
-/subprojects/*/
-*.pkg.tar.zst
 /foot-custom/
+*.pkg.tar.zst
+# Subprojects fetched from the pinned .wrap files; only the wraps are tracked
+/subprojects/*/
+# Virtualenv for the hash-locked CI Python tools
+/.venv-ci/

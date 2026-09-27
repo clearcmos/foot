@@ -142,7 +142,7 @@ jobs:
             --exclude tests/ \
             --exclude subprojects/ \
             --exclude build-coverage/ \
-            --fail-under-line 6 \
+            --fail-under-line 7 \
             --print-summary \
             build-coverage
 

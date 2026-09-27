@@ -37,14 +37,48 @@ Nested `kwin_wayland --virtual` instances run at realtime priority and keep runn
 
 `.github/workflows/ci.yml` is the authoritative CI pipeline. It runs on
 Ubuntu 24.04 and includes static Python checks, GCC debug and Clang release
-builds, tests, binary smoke checks, and a 6% line-coverage ratchet. CI forces
+builds, tests, binary smoke checks, and a 7% line-coverage ratchet (raise it
+as coverage grows, never lower it). CI forces
 the pinned fcft, tllist, and wayland-protocols fallbacks while allowing their
 nested dependencies to resolve from the system.
 
 CI-only Python tools are declared in `.github/requirements-ci.in` and
 hash-locked in `.github/requirements-ci.txt`. Regenerate the lock file with the
 `uv pip compile` command documented in the input file. Dependabot checks
-GitHub Actions and Python dependencies monthly.
+GitHub Actions and Python dependencies monthly. The fcft, tllist, and
+wayland-protocols `.wrap` pins are bumped by hand.
+
+Run the CI static checks and the coverage gate locally:
+
+```bash
+# Static checks (codespell, mypy, ruff) from the hash-locked tools
+python3 -m venv .venv-ci && .venv-ci/bin/pip install --require-hashes -r .github/requirements-ci.txt && .venv-ci/bin/codespell && .venv-ci/bin/mypy && .venv-ci/bin/ruff check .
+
+# Coverage gate (needs .venv-ci for gcovr)
+meson setup build-coverage --buildtype=debug -Db_coverage=true && meson test -C build-coverage && .venv-ci/bin/gcovr --root . --exclude tests/ --exclude subprojects/ --exclude build-coverage/ --fail-under-line 7 --print-summary build-coverage
+```
+
+C has no separate linter or formatter. GCC and Clang with `-Werror -pedantic`
+act as the linter and type checker. Code follows upstream's style, with
+whitespace set by `.editorconfig`: reformatting upstream files with
+clang-format would turn every upstream merge into conflicts.
+
+Only the fork's pure logic has unit tests (`tests/test-tab-*.c`). `tab.c`
+has no test file of its own because it needs a live compositor: move pure
+decisions out into small helpers (`tab-close.c`, `tab-pin.c`,
+`tab-activity.c`) and test them there, and exercise the rest with the
+nested-compositor smoke run above. Upstream modules keep upstream's coverage.
+
+## Distribution and changelog
+
+foot is installed as the `foot-custom` Arch package. `PKGBUILD` clones the
+pushed `main` from GitHub, not the local tree, so push before building. Build
+and install it with `makepkg -si` in a checkout; `pkgver()` counts commits so
+every rebuild reads as an upgrade. A running foot keeps its old binary until
+its window closes.
+
+`CHANGELOG.md` is upstream's and is not maintained for fork changes. The fork
+changelog is git history plus the fork summary at the top of `README.md`.
 
 ## Architecture
 
@@ -176,3 +210,30 @@ Key meson options: `ime` (IME support), `grapheme-clustering` (Unicode via libut
 ## Compiler Settings
 
 The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-aliasing` and `-pedantic`.
+
+## Decision log
+
+Dated reasons for choices that are not obvious from the code.
+
+- 2026-09-27: A background-tab activity run must last
+  `TAB_ACTIVITY_MIN_RUN_MS` (1 s) to count. Claude Code repaints when it
+  loses focus, so leaving an idle Claude tab produced a burst of output that
+  would otherwise mark the tab done.
+- 2026-09-27: A bar-only redraw commits the window surface. The tab bar is a
+  synchronized subsurface, so the background pulse froze whenever the visible
+  tab was idle.
+- 2026-09-27: Test files that rely on `assert()` start with `#undef NDEBUG`.
+  The Clang release CI job defines `NDEBUG`, which compiled the checks out
+  and failed the build on unused variables.
+- 2026-09-07: `pkgver()` counts all commits. The 1.26.1 tag is not in this
+  fork, so the tag-relative count was always 0 and pacman compared commit
+  hashes, reporting spurious downgrades.
+- 2026-09-07: Tab shutdown goes through `term_shutdown()` and `tab_detach()`.
+  Closing a tab whose shell exited, or closing a window with tabs open,
+  crashed the server with a use-after-free of the shared window.
+- 2026-04-30: `fdm_ptmx()` dispatches Wayland input between PTY read
+  iterations. A tab streaming heavy output (an AI session) kept clicks,
+  keys, and tab switches waiting in the socket until the read drained.
+- 2026-04-10: The pending frame callback is destroyed and cleared before
+  the window pointer is nulled. It was otherwise destroyed twice when
+  closing a tab with a running subprocess.
