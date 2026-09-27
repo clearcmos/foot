@@ -63,10 +63,11 @@ act as the linter and type checker. Code follows upstream's style, with
 whitespace set by `.editorconfig`: reformatting upstream files with
 clang-format would turn every upstream merge into conflicts.
 
-Only the fork's pure logic has unit tests (`tests/test-tab-*.c`). `tab.c`
-has no test file of its own because it needs a live compositor: move pure
-decisions out into small helpers (`tab-close.c`, `tab-pin.c`,
-`tab-activity.c`) and test them there, and exercise the rest with the
+Only the fork's pure logic has unit tests (`tests/test-tab-*.c`,
+`tests/test-window-state.c`). `tab.c` and the window-state I/O in
+`terminal.c` have no test files of their own because they need a live
+compositor: move pure decisions out into small helpers (`tab-close.c`,
+`tab-pin.c`, `tab-activity.c`, `window-state.c`) and test them there, and exercise the rest with the
 nested-compositor smoke run above. Upstream modules keep upstream's coverage.
 
 ## Distribution and changelog
@@ -189,6 +190,11 @@ in `foot.ini`, or passing `-w`/`-W`, therefore takes effect immediately.
 Zoom is re-applied as the same uniform adjustment the zoom bindings make
 (`state_apply_zoom()`), so secondary fonts keep their configured relation to
 the primary font. The config struct is never mutated.
+
+The file format, the configuration matching, and the zoom math live in
+`window-state.c/h` (`struct window_state`, unit-tested in
+`tests/test-window-state.c`); `terminal.c` keeps the file path, the I/O, and
+the mapping to and from the terminal and config structs.
 
 ## Bell command ${pty} template (legacy compatibility)
 

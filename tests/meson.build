@@ -28,3 +28,11 @@ tab_activity_test = executable(
   '../tab-activity.c')
 
 test('tab-activity', tab_activity_test)
+
+window_state_test = executable(
+  'test-window-state',
+  'test-window-state.c',
+  '../window-state.c',
+  dependencies: [math])
+
+test('window-state', window_state_test)

@@ -289,6 +289,7 @@ pgolib = static_library(
   'grid.c', 'grid.h',
   'selection.c', 'selection.h',
   'terminal.c', 'terminal.h',
+  'window-state.c', 'window-state.h',
   emoji_variation_sequences,
   wl_proto_src + wl_proto_headers,
   dependencies: [libepoll, pixman, fcft, tllist, wayland_client, xkb, utf8proc],

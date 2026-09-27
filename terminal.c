@@ -47,27 +47,17 @@
 #include "xmalloc.h"
 #include "tab.h"
 #include "tab-activity.h"
+#include "window-state.h"
 #include "xsnprintf.h"
 
 #define PTMX_TIMING 0
 
-/* Window state persistence, see state_save() */
-struct saved_state {
-    int width, height;             /* physical pixels */
-    bool maximized;
-    float font_pt;                 /* zoomed primary font size, one of */
-    int font_px;
-    int conf_size_type;            /* configuration at save time */
-    unsigned conf_width, conf_height;
-    float conf_font_pt;
-    int conf_font_px;
-};
-
-static bool state_load(struct saved_state *s);
+/* Window state persistence, see state_save() and window-state.c */
+static bool state_load(struct window_state *s);
 static bool state_size_conf_matches(
-    const struct terminal *term, const struct saved_state *s);
+    const struct terminal *term, const struct window_state *s);
 static void state_apply_zoom(
-    struct terminal *term, const struct saved_state *s);
+    struct terminal *term, const struct window_state *s);
 
 static void
 enqueue_data_for_slave(const void *data, size_t len, size_t offset,
@@ -1566,7 +1556,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
                 term->font_sizes[i][j] = parent->font_sizes[i][j];
         }
     } else {
-        struct saved_state saved;
+        struct window_state saved;
         const bool have_state = state_load(&saved);
 
         if (have_state && state_size_conf_matches(term, &saved)) {
@@ -1907,34 +1897,34 @@ state_save(const struct terminal *term)
         height = term->height;
     }
 
-    fprintf(f, "width=%d\n", width);
-    fprintf(f, "height=%d\n", height);
-    fprintf(f, "maximized=%d\n", win->is_maximized ? 1 : 0);
-    fprintf(f, "conf_size=%d,%u,%u\n",
-            (int)conf->size.type, conf->size.width, conf->size.height);
+    struct window_state s = {
+        .width = width,
+        .height = height,
+        .maximized = win->is_maximized,
+        .conf_size_type = (int)conf->size.type,
+        .conf_width = conf->size.width,
+        .conf_height = conf->size.height,
+    };
 
     if (conf->fonts[0].count > 0) {
         const struct config_font *zoomed = &term->font_sizes[0][0];
         const struct config_font *primary = &conf->fonts[0].arr[0];
 
-        if (zoomed->px_size > 0)
-            fprintf(f, "font_px=%d\n", zoomed->px_size);
-        else
-            fprintf(f, "font_pt=%.2f\n", zoomed->pt_size);
-        fprintf(f, "conf_font=%.2f,%d\n", primary->pt_size, primary->px_size);
+        s.has_font = true;
+        s.font_pt = zoomed->pt_size;
+        s.font_px = zoomed->px_size;
+        s.conf_font_pt = primary->pt_size;
+        s.conf_font_px = primary->px_size;
     }
 
+    window_state_write(f, &s);
     fclose(f);
     LOG_DBG("saved window state");
 }
 
 static bool
-state_load(struct saved_state *s)
+state_load(struct window_state *s)
 {
-    /* Sentinels: a file without the conf_* lines never matches */
-    *s = (struct saved_state){
-        .conf_size_type = -1, .conf_font_pt = -1., .conf_font_px = -1};
-
     char *path = state_file_path();
     if (path == NULL)
         return false;
@@ -1944,59 +1934,21 @@ state_load(struct saved_state *s)
     if (f == NULL)
         return false;
 
-    char line[256];
-    int maximized = 0;
-    unsigned conf_w = 0, conf_h = 0;
-
-    while (fgets(line, sizeof(line), f) != NULL) {
-        if (sscanf(line, "width=%d", &s->width) == 1) continue;
-        if (sscanf(line, "height=%d", &s->height) == 1) continue;
-        if (sscanf(line, "maximized=%d", &maximized) == 1) continue;
-        if (sscanf(line, "font_pt=%f", &s->font_pt) == 1) continue;
-        if (sscanf(line, "font_px=%d", &s->font_px) == 1) continue;
-        if (sscanf(line, "conf_size=%d,%u,%u",
-                   &s->conf_size_type, &conf_w, &conf_h) == 3)
-        {
-            s->conf_width = conf_w;
-            s->conf_height = conf_h;
-            continue;
-        }
-        if (sscanf(line, "conf_font=%f,%d",
-                   &s->conf_font_pt, &s->conf_font_px) == 2)
-        {
-            continue;
-        }
-    }
+    window_state_read(f, s);
     fclose(f);
 
-    s->maximized = maximized != 0;
-
     LOG_DBG("loaded window state (w=%d, h=%d, maximized=%d, pt=%.2f, px=%d)",
-            s->width, s->height, maximized, s->font_pt, s->font_px);
+            s->width, s->height, s->maximized, s->font_pt, s->font_px);
     return true;
 }
 
 static bool
 state_size_conf_matches(const struct terminal *term,
-                        const struct saved_state *s)
+                        const struct window_state *s)
 {
     const struct config *conf = term->conf;
-    return s->conf_size_type == (int)conf->size.type &&
-        s->conf_width == conf->size.width &&
-        s->conf_height == conf->size.height;
-}
-
-static bool
-state_font_conf_matches(const struct terminal *term,
-                        const struct saved_state *s)
-{
-    const struct config *conf = term->conf;
-    if (conf->fonts[0].count == 0)
-        return false;
-
-    const struct config_font *primary = &conf->fonts[0].arr[0];
-    return s->conf_font_px == primary->px_size &&
-        fabsf(s->conf_font_pt - primary->pt_size) < 0.005f;
+    return window_state_size_matches(
+        s, (int)conf->size.type, conf->size.width, conf->size.height);
 }
 
 /*
@@ -2005,49 +1957,24 @@ state_font_conf_matches(const struct terminal *term,
  * the primary font. Needs the window, for the DPI.
  */
 static void
-state_apply_zoom(struct terminal *term, const struct saved_state *s)
+state_apply_zoom(struct terminal *term, const struct window_state *s)
 {
-    if (!state_font_conf_matches(term, s))
+    const struct config *conf = term->conf;
+    if (conf->fonts[0].count == 0)
         return;
 
-    const struct config *conf = term->conf;
     const struct config_font *primary = &conf->fonts[0].arr[0];
     const float dpi = conf->dpi_aware ? get_font_dpi(term) : 96.;
 
-    if (s->font_px > 0) {
-        const int conf_px = primary->px_size > 0
-            ? primary->px_size
-            : (int)roundf(primary->pt_size * dpi / 72.);
-        const int delta = s->font_px - conf_px;
-        if (delta == 0)
-            return;
+    struct window_state_zoom zoom;
+    if (!window_state_zoom(s, primary->pt_size, primary->px_size, dpi, &zoom))
+        return;
 
-        for (size_t i = 0; i < 4; i++) {
-            for (size_t j = 0; j < conf->fonts[i].count; j++) {
-                struct config_font *font = &term->font_sizes[i][j];
-                const int px = font->px_size > 0
-                    ? font->px_size
-                    : (int)roundf(font->pt_size * dpi / 72.);
-                font->px_size = max(px + delta, 1);
-            }
-        }
-    } else if (s->font_pt > 0) {
-        const float conf_pt = primary->px_size > 0
-            ? primary->px_size * 72. / dpi
-            : primary->pt_size;
-        const float delta = s->font_pt - conf_pt;
-        if (fabsf(delta) < 0.005f)
-            return;
-
-        for (size_t i = 0; i < 4; i++) {
-            for (size_t j = 0; j < conf->fonts[i].count; j++) {
-                struct config_font *font = &term->font_sizes[i][j];
-                const float pt = font->px_size > 0
-                    ? font->px_size * 72. / dpi
-                    : font->pt_size;
-                font->pt_size = fmaxf(pt + delta, 0.f);
-                font->px_size = -1;
-            }
+    for (size_t i = 0; i < 4; i++) {
+        for (size_t j = 0; j < conf->fonts[i].count; j++) {
+            struct config_font *font = &term->font_sizes[i][j];
+            window_state_zoom_font(
+                &zoom, dpi, &font->pt_size, &font->px_size);
         }
     }
 }
