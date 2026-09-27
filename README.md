@@ -7,7 +7,7 @@ The fast, lightweight and minimalistic Wayland terminal emulator.
 This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom modifications:
 
 - Multi-tab support: tab bar, per-tab cwd titles, process teardown on close, right-click context menu, `footclient --tab`
-- Configurable foreground-process activity pulse in the tab bar
+- Background-tab activity indicator for foreground processes such as coding agents, with per-process colors
 - Pinned tabs (Ctrl+D): compact square tabs kept at the far left
 - Split pane mode (Ctrl+E): all tabs shown as simultaneously visible panes
 - Keyboard shortcuts help overlay (F1)
@@ -101,8 +101,10 @@ This fork adds multi-tab support:
 * Mouse hover and click on tabs to switch
 * Ctrl+E toggles a split view showing every tab as a live pane
 * `footclient --tab` opens a new tab in the focused window
-* A configurable activity pulse on tabs whose foreground process is
-  producing output (`[tab-bar]` in foot.ini, default: `claude`)
+* Background tabs running a configured process pulse in that process's
+  color while it produces output, then stay highlighted once it stops
+  until you switch to them (`[tab-bar]` in foot.ini, default: Claude
+  orange, Codex green, Antigravity blue)
 * Ctrl+Click to open URLs in the default browser; URLs underline on hover
 * Right-click to copy selected text to clipboard
 * Ctrl+A copies the whole scrollback; PageUp/PageDown and Shift+Home/End

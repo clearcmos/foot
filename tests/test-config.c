@@ -606,6 +606,27 @@ test_section_tab_bar(void)
     test_string(
         &ctx, &parse_section_tab_bar, "activity-pulse-processes",
         &conf.tab_bar.activity_pulse_processes);
+
+    ctx.key = "activity-pulse-processes";
+    ctx.value = "claude:d97757, codex:10a37f,agy";
+    if (!parse_section_tab_bar(&ctx) ||
+        !streq(conf.tab_bar.activity_pulse_processes, ctx.value))
+    {
+        BUG("[%s].%s=%s: failed to parse",
+            ctx.section, ctx.key, ctx.value);
+    }
+
+    static const char *const invalid_processes[] = {
+        "claude:d9775", "claude:d97757ff", "claude:zz7757", "claude:",
+        ":d97757",
+    };
+    for (size_t i = 0; i < ALEN(invalid_processes); i++) {
+        ctx.value = invalid_processes[i];
+        if (parse_section_tab_bar(&ctx)) {
+            BUG("[%s].%s=%s: did not fail to parse as expected",
+                ctx.section, ctx.key, ctx.value);
+        }
+    }
     test_color(
         &ctx, &parse_section_tab_bar, "activity-pulse-color", false,
         &conf.tab_bar.activity_pulse_color);

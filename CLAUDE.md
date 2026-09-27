@@ -82,15 +82,24 @@ Key implementation details:
 - `do_tab_switch()` must transfer both `seat->kbd_focus` and `term->kbd_focus` to avoid hollow cursor on the new tab. It also clears the old tab's `render.pending` flags and destroys the window's in-flight frame callback: `frame_callback()` only services its own terminal, so a leftover callback would draw the old tab and strand the new tab's render.
 - Grid vertical margin is anchored to the top (`pad_top`, not centered) to prevent text jumping during zoom.
 - Shutdown of a tab sharing its window goes through one choke point: `term_shutdown()` unregisters the PTY (which needs the configured window), then calls `tab_detach()` to remove the tab, move focus, and clear `term->window`, so the deferred `fdm_shutdown()` finds no window to destroy. This covers Ctrl+W, the context menu, the shell exiting, and `footclient` teardown alike. Closing the window from the compositor (`xdg_toplevel_close`) calls `tab_shutdown_window()`, which shuts every tab down; the last one destroys the window. `wayl_win_destroy()` unmaps and frees the tab bar and panes via `tab_bar_unmap()` / `tab_bar_destroy()`. Closed tabs are not retained or recoverable.
-- The tab activity pulse is process-agnostic infrastructure. `[tab-bar]`
-  controls whether it is enabled, the comma-separated foreground process
-  names to match, its RGB color, and how recently the PTY must have produced
-  output. Defaults preserve the original Claude indicator (`claude`, green
-  `00cc33`, 700 ms). `tab-activity.c/h` provides exact process-list matching;
-  `term_foreground_pgid()` / `term_process_comm()` in `terminal.c` read the
-  foreground process from `/proc`, and `render.c` draws the pulse. The pulse
-  timer only marks the bar dirty; the render hook picks that up without a
-  grid render.
+- The tab activity indicator is process-agnostic infrastructure. `[tab-bar]`
+  `activity-pulse-processes` is a comma-separated list of `name[:RRGGBB]`
+  entries (default `claude:d97757,codex:10a37f,agy:1a73e8`); names without a
+  color use `activity-pulse-color` (`00cc33`). Only hidden tabs show it (not
+  the active tab, not any pane in split mode): a hidden tab pulses while its
+  matched process produces a run of output, then stays solid once the run
+  ends (`activity-pulse-quiet-ms` of silence, default 700) until the tab is
+  shown. A run must last `TAB_ACTIVITY_MIN_RUN_MS` (1 s) to count, because
+  Claude Code repaints on focus-out and that burst must not mark the tab.
+  The working/done state machine is pure and unit-tested in
+  `tab-activity.c` (`struct tab_activity_run`, `tests/test-tab-activity.c`),
+  along with process-list matching and color lookup; `tab.c` feeds it from
+  `tab_on_output()` and derives visibility lazily, so tab switches need no
+  hook. `term_foreground_pgid()` / `term_process_comm()` in `terminal.c` read
+  the foreground process from `/proc`, and `render.c` draws the indicator.
+  The pulse timer only marks the bar dirty; the render hook renders just the
+  bar and then commits the window surface, since the bar is a synchronized
+  subsurface whose commit does not show until its parent commits.
 
 Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev). Also Ctrl+PageDown/PageUp and Shift+Left/Right for next/prev. Ctrl+E toggles split pane mode. Ctrl+D pins/unpins the active tab. Ctrl+Left/Right sends ESC b/f for word movement. PageUp/PageDown scroll the scrollback by a page and Shift+Home/Shift+End jump to its top/bottom (bare Home/End reach the shell). F1 shows the keyboard shortcuts help card; keep its entry table in `render_overlay()` in sync with the default bindings in `config.c`.
 

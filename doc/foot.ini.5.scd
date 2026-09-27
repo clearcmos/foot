@@ -832,9 +832,14 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 # SECTION: tab-bar
 
 *activity-pulse*
-	Boolean. When enabled, a tab whose foreground process matches
-	*activity-pulse-processes* pulses while that process is producing
-	terminal output. This is useful for long-running interactive tools.
+	Boolean. When enabled, a background tab whose foreground process
+	matches *activity-pulse-processes* pulses while that process is
+	producing terminal output. Once the output stops, the tab stays
+	highlighted until you switch to it, so a finished or waiting agent
+	stands out. The tab you are looking at (and every pane in split mode)
+	shows no indicator. Output only counts once it has continued for about
+	a second, so a one-off redraw, such as a TUI repainting when its tab
+	loses focus, does not mark the tab.
 
 	Default: _yes_.
 
@@ -843,18 +848,23 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 	the activity pulse. Names are matched exactly against the operating
 	system's process name. Whitespace around names is ignored.
 
+	Each name can be followed by *:RRGGBB* to give that process its own
+	pulse color. Names without a color use *activity-pulse-color*.
+
 	Set this to the empty string (*""*) to match no processes.
 
-	Default: _claude_.
+	Default: _claude:d97757,codex:10a37f,agy:1a73e8_ (Claude, Codex, and
+	Antigravity in their brand colors).
 
 *activity-pulse-color*
-	RGB color used for the activity pulse.
+	RGB color used for the activity pulse of processes listed in
+	*activity-pulse-processes* without a color of their own.
 
 	Default: _00cc33_.
 
 *activity-pulse-quiet-ms*
-	How recently, in milliseconds, a matching foreground process must
-	have produced terminal output to be considered active.
+	How long, in milliseconds, a matching foreground process must stay
+	silent before its output is considered stopped.
 
 	Default: _700_.
 

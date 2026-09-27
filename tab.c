@@ -953,6 +953,23 @@ tab_bar_height(const struct terminal *term)
 }
 
 static int64_t
+now_ms(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+/* Visible tabs show no activity indicator: the output is on screen */
+static void
+update_activity_visibility(const struct tab_bar *tb, struct tab *tab,
+                           int64_t now)
+{
+    tab_activity_set_visible(
+        &tab->activity, tb->split_mode || tab == tb->active, now);
+}
+
+static int64_t
 ms_since(const struct timespec *t)
 {
     struct timespec now;
@@ -994,8 +1011,9 @@ refresh_fg_activity_match(struct tab *tab)
     tab->cached_fg_pgid = fg_pgid;
     tab->fg_activity_match =
         term_process_comm(fg_pgid, comm, sizeof(comm)) &&
-        tab_activity_process_matches(
-            conf->tab_bar.activity_pulse_processes, comm);
+        tab_activity_process_color(
+            conf->tab_bar.activity_pulse_processes, comm,
+            conf->tab_bar.activity_pulse_color, &tab->fg_activity_color);
     return tab->fg_activity_match;
 }
 
@@ -1043,10 +1061,14 @@ fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data)
     ssize_t r = read(fd, &expirations, sizeof(expirations));
     (void)r;
 
-    /* Re-check activity and disarm when no configured process is active. */
+    /* Keep ticking while a hidden tab's run of output is ongoing; the
+     * final tick draws the steady mark once the run has ended */
+    const int64_t now = now_ms();
+    const uint32_t quiet_ms = win->term->conf->tab_bar.activity_pulse_quiet_ms;
     bool any_activity = false;
     tll_foreach(tb->tabs, it) {
-        if (tab_activity_is_active(&it->item))
+        update_activity_visibility(tb, &it->item, now);
+        if (tab_activity_run_pending(&it->item.activity, now, quiet_ms))
             any_activity = true;
     }
 
@@ -1081,25 +1103,29 @@ tab_on_output(struct terminal *term)
     if (ms_since(&tab->last_fg_check) >= PROC_CHECK_MS)
         refresh_fg_activity_match(tab);
 
-    if (tab->fg_activity_match && tb->pulse_timer_fd < 0) {
+    if (!tab->fg_activity_match)
+        return;
+
+    const int64_t now = now_ms();
+    update_activity_visibility(tb, tab, now);
+    tab_activity_record_output(
+        &tab->activity, now, term->conf->tab_bar.activity_pulse_quiet_ms);
+
+    if (!tab->activity.visible && tb->pulse_timer_fd < 0) {
         tb->dirty = true;
         pulse_timer_arm(term->window);
     }
 }
 
-bool
-tab_activity_is_active(struct tab *tab)
+enum tab_activity_state
+tab_bar_activity_state(struct tab_bar *tb, struct tab *tab)
 {
     struct terminal *term = tab->term;
-    if (term == NULL || term->ptmx < 0)
-        return false;
+    if (term == NULL)
+        return TAB_ACTIVITY_NONE;
 
-    if (ms_since(&tab->last_fg_check) >= PROC_CHECK_MS)
-        refresh_fg_activity_match(tab);
-
-    if (!tab->fg_activity_match)
-        return false;
-
-    return ms_since(&term->last_pty_activity) <
-        term->conf->tab_bar.activity_pulse_quiet_ms;
+    const int64_t now = now_ms();
+    update_activity_visibility(tb, tab, now);
+    return tab_activity_state(
+        &tab->activity, now, term->conf->tab_bar.activity_pulse_quiet_ms);
 }

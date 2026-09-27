@@ -313,7 +313,6 @@ fdm_ptmx(struct fdm *fdm, int fd, int events, void *data)
         xassert(term->interactive_resizing.grid == NULL);
 
         /* The tab title and activity indicator follow the PTY output */
-        clock_gettime(CLOCK_MONOTONIC, &term->last_pty_activity);
         if (term->window != NULL && term->window->tab_bar.tab_count > 1)
             tab_on_output(term);
 

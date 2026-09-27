@@ -857,9 +857,6 @@ struct terminal {
 
     bool grapheme_shaping;
     bool size_notifications;
-
-    /* Most recent PTY output, used by the tab activity indicator */
-    struct timespec last_pty_activity;
 };
 
 struct config;

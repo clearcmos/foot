@@ -1,6 +1,7 @@
 config_test = executable(
   'test-config',
   'test-config.c',
+  '../tab-activity.c',
   wl_proto_headers,
   link_with: [common, tokenize],
   dependencies: [pixman, xkb, fontconfig, wayland_client, fcft, tllist])

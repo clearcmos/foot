@@ -24,6 +24,7 @@
 #include "debug.h"
 #include "input.h"
 #include "key-binding.h"
+#include "tab-activity.h"
 #include "macros.h"
 #include "tokenize.h"
 #include "util.h"
@@ -1274,8 +1275,20 @@ parse_section_tab_bar(struct context *ctx)
     if (streq(key, "activity-pulse"))
         return value_to_bool(ctx, &conf->tab_bar.activity_pulse);
 
-    else if (streq(key, "activity-pulse-processes"))
-        return value_to_str(ctx, &conf->tab_bar.activity_pulse_processes);
+    else if (streq(key, "activity-pulse-processes")) {
+        char *processes = NULL;
+        value_to_str(ctx, &processes);
+        if (!tab_activity_processes_valid(processes)) {
+            LOG_CONTEXTUAL_ERR(
+                "entries must be process names, optionally followed by "
+                ":RRGGBB");
+            free(processes);
+            return false;
+        }
+        free(conf->tab_bar.activity_pulse_processes);
+        conf->tab_bar.activity_pulse_processes = processes;
+        return true;
+    }
 
     else if (streq(key, "activity-pulse-color"))
         return value_to_color(
@@ -3666,7 +3679,8 @@ config_load(struct config *conf, const char *conf_path,
         },
         .tab_bar = {
             .activity_pulse = true,
-            .activity_pulse_processes = xstrdup("claude"),
+            .activity_pulse_processes =
+                xstrdup("claude:d97757,codex:10a37f,agy:1a73e8"),
             .activity_pulse_color = 0x00cc33,
             .activity_pulse_quiet_ms = 700,
             .close_passthrough_processes = xstrdup("nano"),

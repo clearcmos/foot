@@ -1,9 +1,12 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <time.h>
 #include <sys/types.h>
 #include <tllist.h>
+
+#include "tab-activity.h"
 
 struct terminal;
 struct wl_window;
@@ -27,6 +30,8 @@ struct tab {
     struct timespec last_fg_check;
     pid_t cached_fg_pgid;
     bool fg_activity_match;
+    uint32_t fg_activity_color;         /* pulse color when matched */
+    struct tab_activity_run activity;   /* working/done state while hidden */
 };
 
 typedef tll(struct tab) tab_list_t;
@@ -167,11 +172,12 @@ struct wl_surface *tab_topmost_surface(const struct wl_window *win);
 int tab_bar_height(const struct terminal *term);
 
 /* Called from the PTY read path when a terminal produces output. Refreshes
- * the tab title and the foreground-process classification (both debounced)
- * and arms the tab-bar pulse timer when a configured process is active. */
+ * the tab title and the foreground-process classification (both debounced),
+ * records output from a configured process, and arms the tab-bar pulse
+ * timer while that tab is hidden. */
 void tab_on_output(struct terminal *term);
 
-/* Returns true if the tab's foreground process is configured for activity
- * indication and there has been recent PTY output. Updates the cached
- * foreground-process classification as a side effect. */
-bool tab_activity_is_active(struct tab *tab);
+/* The tab's activity indicator: a pulse while a configured process works
+ * in a hidden tab, a steady mark once it stops, until the tab is shown. */
+enum tab_activity_state tab_bar_activity_state(struct tab_bar *tb,
+                                               struct tab *tab);
