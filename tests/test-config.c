@@ -1292,6 +1292,81 @@ test_section_key_bindings(void)
     config_free(&conf);
 }
 
+static size_t
+count_action(const struct config_key_binding_list *bindings, int action)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < bindings->count; i++) {
+        if (bindings->arr[i].action == action)
+            count++;
+    }
+    return count;
+}
+
+static void
+check_actions_contiguous(const struct config_key_binding_list *bindings,
+                         const char *section)
+{
+    for (size_t i = 1; i < bindings->count; i++) {
+        const int action = bindings->arr[i].action;
+        if (action == bindings->arr[i - 1].action)
+            continue;
+        for (size_t j = 0; j < i; j++) {
+            if (bindings->arr[j].action == action) {
+                BUG("[%s]: default bindings for action %d are not contiguous",
+                    section, action);
+            }
+        }
+    }
+}
+
+/* Overriding an action removes its defaults as one contiguous run
+ * (remove_from_key_bindings_list()). The fork split the spawn-terminal and
+ * tab-next/tab-prev defaults apart, so overriding them hit a BUG(), and
+ * with assertions off dropped unrelated bindings such as show-urls-launch */
+static void
+test_default_bindings_overridable(void)
+{
+    struct config conf = {0};
+    add_default_key_bindings(&conf);
+    add_default_search_bindings(&conf);
+    add_default_url_bindings(&conf);
+    add_default_mouse_bindings(&conf);
+
+    check_actions_contiguous(&conf.bindings.key, "key-bindings");
+    check_actions_contiguous(&conf.bindings.search, "search-bindings");
+    check_actions_contiguous(&conf.bindings.url, "url-bindings");
+    check_actions_contiguous(&conf.bindings.mouse, "mouse-bindings");
+
+    struct context ctx = {
+        .conf = &conf, .section = "key-bindings", .path = "unittest"};
+    const size_t total = conf.bindings.key.count;
+    const size_t spawn = count_action(&conf.bindings.key, BIND_ACTION_SPAWN_TERMINAL);
+    const size_t next = count_action(&conf.bindings.key, BIND_ACTION_TAB_NEXT);
+    const size_t prev = count_action(&conf.bindings.key, BIND_ACTION_TAB_PREV);
+
+    ctx.key = "spawn-terminal";
+    ctx.value = "Control+Shift+n";
+    if (!parse_section_key_bindings(&ctx))
+        BUG("[key-bindings].spawn-terminal: failed to parse");
+
+    ctx.key = "tab-next";
+    ctx.value = "Control+Tab";
+    if (!parse_section_key_bindings(&ctx))
+        BUG("[key-bindings].tab-next: failed to parse");
+
+    if (count_action(&conf.bindings.key, BIND_ACTION_SPAWN_TERMINAL) != 1 ||
+        count_action(&conf.bindings.key, BIND_ACTION_TAB_NEXT) != 1 ||
+        count_action(&conf.bindings.key, BIND_ACTION_TAB_PREV) != prev ||
+        count_action(&conf.bindings.key, BIND_ACTION_SHOW_URLS_LAUNCH) != 1 ||
+        conf.bindings.key.count != total - (spawn - 1) - (next - 1))
+    {
+        BUG("[key-bindings]: overriding a default removed other bindings");
+    }
+
+    config_free(&conf);
+}
+
 static void
 test_section_key_bindings_collisions(void)
 {
@@ -1591,6 +1666,7 @@ main(int argc, const char *const *argv)
     test_section_csd();
     test_section_key_bindings();
     test_section_key_bindings_collisions();
+    test_default_bindings_overridable();
     test_section_search_bindings();
     test_section_search_bindings_collisions();
     test_section_url_bindings();

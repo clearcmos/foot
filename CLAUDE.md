@@ -221,6 +221,12 @@ The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-ali
 
 Dated reasons for choices that are not obvious from the code.
 
+- 2026-09-27: Each action's default bindings stay adjacent in
+  `add_default_key_bindings()`. Overriding an action removes its defaults
+  as one contiguous run, so the split-up `spawn-terminal` and
+  `tab-next`/`tab-prev` defaults hit a `BUG()`, and with assertions off
+  dropped unrelated bindings such as Ctrl+Shift+O. Pinned by
+  `test_default_bindings_overridable()` in `tests/test-config.c`.
 - 2026-09-27: A background-tab activity run must last
   `TAB_ACTIVITY_MIN_RUN_MS` (1 s) to count. Claude Code repaints when it
   loses focus, so leaving an idle Claude tab produced a burst of output that

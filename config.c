@@ -3394,23 +3394,22 @@ add_default_key_bindings(struct config *conf)
         {BIND_ACTION_FONT_SIZE_DOWN, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_KP_Subtract}}},
         {BIND_ACTION_FONT_SIZE_RESET, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_0}}},
         {BIND_ACTION_FONT_SIZE_RESET, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_KP_0}}},
+        /* Keep each action's defaults adjacent: overriding an action
+         * removes them as one run (remove_from_key_bindings_list()) */
         {BIND_ACTION_SPAWN_TERMINAL, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_n}}},
+        {BIND_ACTION_SPAWN_TERMINAL, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_n}}},
         {BIND_ACTION_SHOW_URLS_LAUNCH, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_o}}},
         {BIND_ACTION_UNICODE_INPUT, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_u}}},
         {BIND_ACTION_PROMPT_PREV, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_z}}},
         {BIND_ACTION_PROMPT_NEXT, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_x}}},
-        {BIND_ACTION_SPAWN_TERMINAL, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_n}}},
         {BIND_ACTION_TAB_NEW, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_t}}},
         {BIND_ACTION_TAB_CLOSE, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_w}}},
+        /* Add m("none") Right / Left here for bare arrow tab switching */
         {BIND_ACTION_TAB_NEXT, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Next}}},
-        {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Prior}}},
         {BIND_ACTION_TAB_NEXT, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Tab}}},
-        {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_Tab}}},
-        /* Uncomment to use bare arrow keys for tab switching:
-        {BIND_ACTION_TAB_NEXT, m("none"), {{XKB_KEY_Right}}},
-        {BIND_ACTION_TAB_PREV, m("none"), {{XKB_KEY_Left}}},
-        */
         {BIND_ACTION_TAB_NEXT, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Right}}},
+        {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_Prior}}},
+        {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_CTRL "+" XKB_MOD_NAME_SHIFT), {{XKB_KEY_Tab}}},
         {BIND_ACTION_TAB_PREV, m(XKB_MOD_NAME_SHIFT), {{XKB_KEY_Left}}},
         {BIND_ACTION_TAB_EXPOSE, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_e}}},
         {BIND_ACTION_TAB_PIN, m(XKB_MOD_NAME_CTRL), {{XKB_KEY_d}}},
