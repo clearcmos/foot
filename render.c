@@ -2390,6 +2390,7 @@ render_overlay(struct terminal *term)
             {"Ctrl+Tab",          "Next tab"},
             {"Ctrl+Shift+Tab",    "Previous tab"},
             {"Shift+Right/Left",  "Next/prev tab"},
+            {"Ctrl+PgDn/PgUp",    "Next/prev tab"},
             {"Ctrl+E",            "Toggle split pane"},
             {"Ctrl+D",            "Pin/unpin tab"},
             {"Ctrl+N",            "New window"},

@@ -1358,8 +1358,8 @@ e.g. *search-start=none*.
 	application. Default: _none_.
 
 *scrollback-up-page*
-	Scrolls up/back one page in history. Default: _Shift+Page\_Up
-	Shift+KP\_Page\_Up_.
+	Scrolls up/back one page in history. Default: _Page\_Up
+	KP\_Page\_Up_.
 
 *scrollback-up-half-page*
 	Scrolls up/back half of a page in history. Default: _none_.
@@ -1369,7 +1369,7 @@ e.g. *search-start=none*.
 
 *scrollback-down-page*
 	Scroll down/forward one page in history. Default:
-	_Shift+Page\_Down Shift+KP\_Page\_Down_.
+	_Page\_Down KP\_Page\_Down_.
 
 *scrollback-down-half-page*
 	Scroll down/forward half of a page in history. Default: _none_.
@@ -1378,10 +1378,10 @@ e.g. *search-start=none*.
 	Scroll down/forward a single line in history. Default: _none_.
 
 *scrollback-home*
-	Scroll to the beginning of the scrollback. Default: _none_.
+	Scroll to the beginning of the scrollback. Default: _Shift+Home_.
 
 *scrollback-end*
-	Scroll to the end (bottom) of the scrollback. Default: _none_.
+	Scroll to the end (bottom) of the scrollback. Default: _Shift+End_.
 
 *clipboard-copy*
 	Copies the current selection into the _clipboard_. Default: _Control+Shift+c_
@@ -1395,7 +1395,7 @@ e.g. *search-start=none*.
 	defined in *mouse-bindings*).
 
 *search-start*
-	Starts a scrollback/history search. Default: _Control+Shift+r_.
+	Starts a scrollback/history search. Default: _Control+f_.
 
 *font-increase*
 	Increases the font size by 0.5pt. Default: _Control+plus
@@ -1411,7 +1411,7 @@ e.g. *search-start=none*.
 *spawn-terminal*
 	Spawns a new terminal. If the shell has been configured to emit
 	the OSC 7 escape sequence, the new terminal will start in the
-	current working directory. Default: _Control+Shift+n_.
+	current working directory. Default: _Control+Shift+n Control+n_.
 
 *minimize*
 	Minimizes the window. Default: _none_.
@@ -1540,6 +1540,56 @@ e.g. *search-start=none*.
 	
 	Default: _none_
 
+*tab-new*
+	Opens a new tab in the current window, starting in the active tab's
+	working directory. Default: _Control+t_.
+
+*tab-close*
+	Closes the active tab. When its foreground process is listed in
+	*close-passthrough-processes* (see *tab-bar*), the key is sent to the
+	application instead. Default: _Control+w_.
+
+*tab-next*
+	Switches to the next tab. Default: _Control+Page\_Down Control+Tab
+	Shift+Right_.
+
+*tab-prev*
+	Switches to the previous tab. Default: _Control+Page\_Up
+	Control+Shift+Tab Shift+Left_.
+
+*tab-expose*
+	Toggles split pane mode, which shows every tab of the window as a
+	pane. Default: _Control+e_.
+
+*tab-pin*
+	Pins or unpins the active tab. Pinned tabs are shown as unlabeled
+	squares at the far left of the tab bar. In split pane mode the key is
+	sent to the application instead. Default: _Control+d_.
+
+*select-all*
+	Selects the whole scrollback and copies it to the _clipboard_. When
+	the foreground process is listed in *select-all-passthrough-processes*
+	(see *main*), the key is sent to the application instead. Default:
+	_Control+a_.
+
+*cursor-left*, *cursor-right*
+	Sends the left or right cursor key sequence to the application,
+	honoring application cursor key mode. Default: _none_.
+
+*cursor-left-word*
+	Sends _ESC b_, backward-word in most shells. Default: _Control+Left_.
+
+*cursor-right-word*
+	Sends _ESC f_, forward-word in most shells. Default: _Control+Right_.
+
+*delete-prev-word*
+	Sends _Control+w_ (0x17), which deletes the word before the cursor
+	in most shells. Default: _Control+BackSpace_.
+
+*show-help*
+	Toggles a card listing the keyboard shortcuts. Any key closes it.
+	Default: _F1_.
+
 *quit*
 	Quit foot. Default: _none_.
 
@@ -1557,16 +1607,15 @@ scrollback search mode. The syntax is exactly the same as the regular
 *commit*
 	Exit search mode and copy current selection into the _primary
 	selection_. Viewport is **not** restored. To copy the selection to
-	the regular _clipboard_, use *Control+Shift+c*. Default: _Return
-	KP_Enter_.
+	the regular _clipboard_, use *Control+Shift+c*. Default: _none_.
 
 *find-prev*
 	Search **backwards** in the scrollback history for the next
-	match. Default: _Control+r_.
+	match. Default: _Shift+Return Shift+KP\_Enter_.
 
 *find-next*
 	Searches **forwards** in the scrollback history for the next
-	match. Default: _Control+s_.
+	match. Default: _Return KP\_Enter_.
 
 *cursor-left*
 	Moves the cursor in the search box one **character** to the

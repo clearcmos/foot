@@ -96,9 +96,9 @@ This fork adds multi-tab support:
 * Ctrl+D pins or unpins the active tab: pinned tabs are unlabeled squares
   grouped at the far left, and tab cycling still visits them in bar order.
   Ctrl+D is therefore not sent to the shell as end-of-file.
-* Right-click on a tab to close it
+* Right-click a tab for a menu with Close Tab
 * Tabs inherit the current zoom level
-* Mouse hover and click on tabs to switch
+* Click a tab to switch to it; hovering highlights it
 * Ctrl+E toggles a split view showing every tab as a live pane
 * `footclient --tab` opens a new tab in the focused window
 * Background tabs running a configured process pulse in that process's
