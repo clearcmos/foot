@@ -919,6 +919,12 @@ section.
 	the working directory of the terminal's foreground process, then in
 	the shell's.
 
+	A bare name such as _notes_ is only clickable when the program
+	printed it as a _file:_ link (OSC 8), which also keeps it working
+	after the working directory changes. GNU *ls*(1) does this with
+	*--hyperlink=auto*, for example through
+	*alias ls='ls --hyperlink=auto'* in the shell's configuration.
+
 	_${path}_ is replaced with the file's absolute path, _${uri}_ with its
 	_file://_ URI, and _${activation-token}_ with an XDG activation token
 	(empty if none), which lets the launched program take focus.

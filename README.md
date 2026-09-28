@@ -115,7 +115,12 @@ This fork adds multi-tab support:
 * Ctrl+Click to open URLs in the default browser; URLs underline on hover
 * Ctrl+Click a file name in the output (`render.c:3058`, `~/notes.md`, a
   `file://` link) to show it in the file manager, selected in its folder
-  (`[url] file-launch`)
+  (`[url] file-launch`). Plain text only counts when it contains a `/` or
+  a `.`, so bare names such as `ls` output need the program to print them
+  as links. For GNU `ls`, add `alias ls='ls --hyperlink=auto'` to your
+  shell config; `eza --hyperlink`, `fd --hyperlink` and
+  `rg --hyperlink-format` do the same. Links carry the absolute path, so
+  they keep working after a `cd`.
 * Right-click to copy selected text to clipboard
 * Ctrl+A copies the whole scrollback; PageUp/PageDown and Shift+Home/End
   scroll it
