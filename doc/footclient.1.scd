@@ -70,6 +70,11 @@ terminal has terminated.
 	Detach the client process from the running terminal, exiting
 	immediately.
 
+*-b*,*--tab*
+	Open the new terminal as a tab in an existing window of the server:
+	the focused window, or else any window. Without a window, a new one
+	is opened.
+
 *-o*,*--override*=[_SECTION_.]_KEY_=_VALUE_
 	Override an option set in the configuration file. If _SECTION_ is not
 	given, defaults to _main_.

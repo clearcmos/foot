@@ -581,7 +581,8 @@ Note: do not set *TERM* here; use the *term* option in the main
 
 *command*
 	When set, foot will execute this command when *BEL* is received.
-	Default: none
+	_${pty}_ in the command is replaced with the ringing terminal's pty
+	device, for example _/dev/pts/5_. Default: none
 
 *command-focused*
 	Boolean, whether to run the command on *BEL* even while

@@ -15,7 +15,13 @@ This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom mo
 - `${pty}` template variable in the `[bell]` command for legacy per-tab notification scripts
 - Custom default keybindings (Ctrl+T, Ctrl+W, Ctrl+Tab, and more)
 
-See CLAUDE.md for implementation details. The upstream README follows below.
+Developed and tested on Arch Linux with KDE Plasma (KWin, Wayland). CI
+builds and runs the unit tests on Ubuntu 24.04, but the fork's additions
+(tab bar, split panes, overlays) have not been tried on other compositors.
+`PKGBUILD` builds it as the `foot-custom` Arch package.
+
+See CLAUDE.md for implementation details. The upstream README follows below,
+with its shortcut lists updated for the fork's defaults.
 
 [![CI status](https://github.com/clearcmos/foot/actions/workflows/ci.yml/badge.svg)](https://github.com/clearcmos/foot/actions/workflows/ci.yml)
 
@@ -185,8 +191,11 @@ These are the default shortcuts. See `man foot.ini` and the example
 
 #### Normal mode
 
-<kbd>shift</kbd>+<kbd>page up</kbd>/<kbd>page down</kbd>
+<kbd>page up</kbd>/<kbd>page down</kbd>
 : Scroll up/down in history
+
+<kbd>shift</kbd>+<kbd>home</kbd>/<kbd>end</kbd>
+: Scroll to the top/bottom of the history
 
 <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>c</kbd>, <kbd>XF86Copy</kbd>
 : Copy selected text to the _clipboard_
@@ -197,7 +206,12 @@ These are the default shortcuts. See `man foot.ini` and the example
 <kbd>shift</kbd>+<kbd>insert</kbd>
 : Paste from the _primary selection_
 
-<kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>r</kbd>
+<kbd>ctrl</kbd>+<kbd>a</kbd>
+: Select the whole scrollback and copy it to the _clipboard_. Sent to
+  the application instead when its process is listed in
+  `select-all-passthrough-processes` (default: `claude`)
+
+<kbd>ctrl</kbd>+<kbd>f</kbd>
 : Start a scrollback search
 
 <kbd>ctrl</kbd>+<kbd>+</kbd>, <kbd>ctrl</kbd>+<kbd>=</kbd>
@@ -209,7 +223,7 @@ These are the default shortcuts. See `man foot.ini` and the example
 <kbd>ctrl</kbd>+<kbd>0</kbd>
 : Reset font size
 
-<kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>n</kbd>
+<kbd>ctrl</kbd>+<kbd>n</kbd>, <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>n</kbd>
 : Spawn a new terminal. If the shell has been [configured to emit the
   OSC 7 escape
   sequence](https://codeberg.org/dnkl/foot/wiki#user-content-spawning-new-terminal-instances-in-the-current-working-directory),
@@ -230,14 +244,44 @@ These are the default shortcuts. See `man foot.ini` and the example
 : Jump to the next prompt. Requires [shell
   integration](https://codeberg.org/dnkl/foot/wiki#user-content-jumping-between-prompts).
 
+<kbd>ctrl</kbd>+<kbd>left</kbd>/<kbd>right</kbd>
+: Send <kbd>escape</kbd> <kbd>b</kbd>/<kbd>f</kbd>, backward/forward
+  word in most shells
+
+<kbd>ctrl</kbd>+<kbd>backspace</kbd>
+: Send <kbd>ctrl</kbd>+<kbd>w</kbd>, which deletes the previous word in
+  most shells
+
+<kbd>f1</kbd>
+: Show a card listing the keyboard shortcuts
+
+#### Tabs
+
+<kbd>ctrl</kbd>+<kbd>t</kbd>
+: Open a new tab in the active tab's working directory
+
+<kbd>ctrl</kbd>+<kbd>w</kbd>
+: Close the active tab. Sent to the application instead when its
+  process is listed in `close-passthrough-processes` (default: `nano`)
+
+<kbd>ctrl</kbd>+<kbd>tab</kbd>, <kbd>ctrl</kbd>+<kbd>page down</kbd>, <kbd>shift</kbd>+<kbd>right</kbd>
+: Switch to the next tab
+
+<kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>tab</kbd>, <kbd>ctrl</kbd>+<kbd>page up</kbd>, <kbd>shift</kbd>+<kbd>left</kbd>
+: Switch to the previous tab
+
+<kbd>ctrl</kbd>+<kbd>e</kbd>
+: Toggle split pane mode, showing every tab as a pane
+
+<kbd>ctrl</kbd>+<kbd>d</kbd>
+: Pin or unpin the active tab
+
 
 #### Scrollback search
 
-<kbd>ctrl</kbd>+<kbd>r</kbd>
-: Search _backward_ for next match
-
-<kbd>ctrl</kbd>+<kbd>s</kbd>
-: Search _forward_ for next match
+<kbd>return</kbd>, <kbd>shift</kbd>+<kbd>return</kbd>
+: Find the next or previous match. With an empty search box, the last
+  searched-for string is used
 
 <kbd>ctrl</kbd>+<kbd>w</kbd>
 : Extend current selection (and thus the search criteria) to the end
@@ -261,9 +305,6 @@ These are the default shortcuts. See `man foot.ini` and the example
 : Finish the search and stay at the current match, which stays
   selected and is copied to the primary selection
 
-<kbd>return</kbd>, <kbd>shift</kbd>+<kbd>return</kbd>
-: Find the next or previous match
-
 
 ### URL mode
 
@@ -284,6 +325,10 @@ These are the default shortcuts. See `man foot.ini` and the example
   clients.
 : Holding <kbd>ctrl</kbd> will create a block selection.
 
+<kbd>ctrl</kbd>+<kbd>left</kbd>
+: Open the URL under the pointer. Anywhere else, starts a block
+  selection
+
 <kbd>left</kbd> - **double-click**
 : Selects the _word_ (separated by spaces, period, comma, parenthesis
   etc) under the pointer. Hold <kbd>ctrl</kbd> to select everything
@@ -300,13 +345,12 @@ These are the default shortcuts. See `man foot.ini` and the example
 : Paste from _primary_ selection
 
 <kbd>right</kbd>
-: Extend current selection. Clicking immediately extends the
-  selection, while hold-and-drag allows you to interactively resize
-  the selection.
+: Copy the current selection to the _clipboard_ and clear it, with or
+  without <kbd>ctrl</kbd>. Upstream's right-click extend-selection does
+  not apply in this fork.
 
-<kbd>ctrl</kbd>+<kbd>right</kbd>
-: Extend the current selection, but force it to be character wise,
-  rather than depending on the original selection mode.
+<kbd>left</kbd>, <kbd>right</kbd> on the tab bar
+: Switch to the clicked tab, or open a menu with Close Tab
 
 <kbd>wheel</kbd>
 : Scroll up/down in history

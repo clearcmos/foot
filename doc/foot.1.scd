@@ -188,8 +188,11 @@ default) available; see *foot.ini*(5).
 
 ## NORMAL MODE
 
-*shift*+*page up*/*page down*
+*page up*/*page down*
 	Scroll up/down in history
+
+*shift*+*home*/*end*
+	Scroll to the top/bottom of the history
 
 *ctrl*+*shift*+*c*, *XF86Copy*
 	Copy selected text to the _clipboard_
@@ -200,7 +203,12 @@ default) available; see *foot.ini*(5).
 *shift*+*insert*
 	Paste from the _primary selection_
 
-*ctrl*+*shift*+*r*
+*ctrl*+*a*
+	Select the whole scrollback and copy it to the _clipboard_. Sent to
+	the application instead when its process is listed in
+	*select-all-passthrough-processes* (see *foot.ini*(5)).
+
+*ctrl*+*f*
 	Start a scrollback search
 
 *ctrl*+*+*, *ctrl*+*=*
@@ -212,7 +220,7 @@ default) available; see *foot.ini*(5).
 *ctrl*+*0*
 	Reset font size
 
-*ctrl*+*shift*+*n*
+*ctrl*+*n*, *ctrl*+*shift*+*n*
 	Spawn a new terminal. If the shell has been configured to emit the
 	_OSC 7_ escape sequence, the new terminal will start in the
 	current working directory.
@@ -230,16 +238,47 @@ default) available; see *foot.ini*(5).
 *ctrl*+*shift*+*x*
 	Jump to the next prompt. Requires shell integration.
 
+*ctrl*+*left*/*right*
+	Send *escape* *b*/*f*, backward/forward word in most shells.
+
+*ctrl*+*backspace*
+	Send *ctrl*+*w*, which deletes the previous word in most shells.
+
+*f1*
+	Show a card listing the keyboard shortcuts.
+
+## TABS
+
+*ctrl*+*t*
+	Open a new tab in the active tab's working directory.
+
+*ctrl*+*w*
+	Close the active tab. Sent to the application instead when its
+	process is listed in *close-passthrough-processes* (see
+	*foot.ini*(5)).
+
+*ctrl*+*tab*, *ctrl*+*page down*, *shift*+*right*
+	Switch to the next tab.
+
+*ctrl*+*shift*+*tab*, *ctrl*+*page up*, *shift*+*left*
+	Switch to the previous tab.
+
+*ctrl*+*e*
+	Toggle split pane mode, showing every tab as a pane.
+
+*ctrl*+*d*
+	Pin or unpin the active tab.
+
 ## SCROLLBACK SEARCH
 
 These keyboard shortcuts affect the search selection:
 
-*ctrl*+*r*
-	Search _backward_ for the next match. If the search string is
+*return*
+	Search _forward_ for the next match. If the search string is
 	empty, the last searched-for string is used.
 
-*ctrl*+*s*
-	Search _forward_ for the next match. If the search string is
+*shift*+*return*
+	Search _backward_ for the next match. If the search string is
 	empty, the last searched-for string is used.
 
 *shift*+*right*
@@ -272,13 +311,14 @@ These keyboard shortcuts affect the search selection:
 *shift*+*insert*
 	Paste from primary selection into the search buffer.
 
-*escape*, *ctrl*+*g*, *ctrl*+*c*
-	Cancel the search
+*ctrl*+*g*, *ctrl*+*c*
+	Cancel the search and return to where the view was.
 
-*return*
+*escape*, *ctrl*+*f*
 	Finish the search and copy the current match to the primary
-	selection. The terminal selection is kept, allowing you to press
-	*ctrl*+*shift*+*c* to copy it to the clipboard.
+	selection. The view stays at the match and the terminal selection
+	is kept, allowing you to press *ctrl*+*shift*+*c* to copy it to the
+	clipboard.
 
 These shortcuts affect the search box in scrollback-search mode:
 
@@ -288,7 +328,7 @@ These shortcuts affect the search box in scrollback-search mode:
 *ctrl*+*left*, *alt*+*b*
 	Moves the cursor in the search box one **word** to the left. 
 
-*ctrl*+*f*
+*right*
 	Moves the cursor in the search box one **character** to the right.
 
 *ctrl*+*right*, *alt*+*f*
@@ -338,6 +378,10 @@ These shortcuts affect scrolling in scrollback-search mode:
 	
 	Holding *ctrl* will create a block selection.
 
+*ctrl*+*left*
+	Open the URL under the pointer. Anywhere else, starts a block
+	selection.
+
 *left*, double-click
 	Selects the _word_ (separated by spaces, period, comma,
 	parenthesis etc) under the pointer. Hold *ctrl* to select
@@ -355,13 +399,11 @@ These shortcuts affect scrolling in scrollback-search mode:
 	Paste from the _primary_ selection
 
 *right*
-	Extend current selection. Clicking immediately extends the
-	selection, while hold-and-drag allows you to interactively resize
-	the selection.
+	Copy the current selection to the _clipboard_ and clear it, with or
+	without *ctrl*.
 
-*ctrl*+*right*
-	Extend the current selection, but force it to be character wise,
-	rather than depending on the original selection mode.
+*left*, *right* on the tab bar
+	Switch to the clicked tab, or open a menu with *Close Tab*.
 
 *wheel*
 	Scroll up/down in history
