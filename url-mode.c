@@ -1,5 +1,6 @@
 #include "url-mode.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wctype.h>
@@ -13,6 +14,7 @@
 #define LOG_ENABLE_DBG 0
 #include "log.h"
 #include "char32.h"
+#include "file-link.h"
 #include "grid.h"
 #include "key-binding.h"
 #include "quirks.h"
@@ -560,8 +562,9 @@ urls_collect(const struct terminal *term, enum url_action action,
 
 struct click_activation_context {
     struct terminal *term;
-    char *url;
     const struct config_spawn_template *launch;
+    char *url;   /* URL to launch, or NULL */
+    char *path;  /* file to show in the file manager, or NULL */
 };
 
 static void
@@ -571,24 +574,92 @@ click_activation_token_done(const char *token, void *data)
 
     size_t argc;
     char **argv;
+    bool expanded;
+
+    if (ctx->path != NULL) {
+        char *uri = file_link_path_to_uri(ctx->path);
+        expanded = spawn_expand_template(
+            ctx->launch, 3,
+            (const char *[]){"path", "uri", "activation-token"},
+            (const char *[]){ctx->path, uri, token != NULL ? token : ""},
+            &argc, &argv);
+        free(uri);
+    } else {
+        expanded = spawn_expand_template(
+            ctx->launch, 2,
+            (const char *[]){"url", "match"},
+            (const char *[]){ctx->url, ctx->url},
+            &argc, &argv);
+    }
+
     int dev_null = open("/dev/null", O_RDWR);
-    if (dev_null >= 0) {
-        if (spawn_expand_template(
-                ctx->launch, 2,
-                (const char *[]){"url", "match"},
-                (const char *[]){ctx->url, ctx->url},
-                &argc, &argv))
-        {
+    if (expanded) {
+        if (dev_null >= 0) {
             spawn(ctx->term->reaper, ctx->term->cwd, argv,
                   dev_null, dev_null, dev_null, NULL, NULL, token);
-            for (size_t i = 0; i < argc; i++)
-                free(argv[i]);
-            free(argv);
         }
-        close(dev_null);
+        for (size_t i = 0; i < argc; i++)
+            free(argv[i]);
+        free(argv);
     }
+    if (dev_null >= 0)
+        close(dev_null);
+
     free(ctx->url);
+    free(ctx->path);
     free(ctx);
+}
+
+/* Runs launch for a URL or a file, taking ownership of both strings */
+static void
+click_launch(struct seat *seat, struct terminal *term, uint32_t serial,
+             const struct config_spawn_template *launch,
+             char *url, char *path)
+{
+    struct click_activation_context *ctx = xmalloc(sizeof(*ctx));
+    *ctx = (struct click_activation_context){
+        .term = term,
+        .launch = launch,
+        .url = url,
+        .path = path,
+    };
+
+    if (!wayl_get_activation_token(
+            seat->wayl, seat, serial, term->window,
+            &click_activation_token_done, ctx))
+    {
+        /* Fallback: launch without activation token */
+        click_activation_token_done(NULL, ctx);
+    }
+}
+
+/* True if url covers the cell at col on absolute row abs_row */
+static bool
+url_covers(const struct url *url, int col, int abs_row)
+{
+    const struct coord *start = &url->range.start;
+    const struct coord *end = &url->range.end;
+
+    if (start->row == end->row)
+        return abs_row == start->row && col >= start->col && col <= end->col;
+    if (abs_row == start->row)
+        return col >= start->col;
+    if (abs_row == end->row)
+        return col <= end->col;
+    return abs_row > start->row && abs_row < end->row;
+}
+
+/* Local path of a file: URI that names an existing file, or NULL */
+static char *
+existing_file_from_uri(const char *uri)
+{
+    char *path = file_link_path_from_uri(uri);
+    struct stat st;
+    if (path != NULL && stat(path, &st) == 0)
+        return path;
+
+    free(path);
+    return NULL;
 }
 
 bool
@@ -603,30 +674,8 @@ urls_open_at_position(struct seat *seat, struct terminal *term,
 
     char *matched_url = NULL;
     tll_foreach(urls, it) {
-        const struct url *url = &it->item;
-        const struct coord *start = &url->range.start;
-        const struct coord *end = &url->range.end;
-
-        bool in_range = false;
-        if (start->row == end->row) {
-            in_range = abs_row == start->row &&
-                       col >= start->col && col <= end->col;
-        } else {
-            if (abs_row == start->row)
-                in_range = col >= start->col;
-            else if (abs_row == end->row)
-                in_range = col <= end->col;
-            else
-                in_range = abs_row > start->row && abs_row < end->row;
-        }
-
-        if (in_range) {
-            matched_url = xstrdup(url->url);
-            break;
-        }
-    }
-
-    tll_foreach(urls, it) {
+        if (matched_url == NULL && url_covers(&it->item, col, abs_row))
+            matched_url = xstrdup(it->item.url);
         url_destroy(&it->item);
         tll_remove(urls, it);
     }
@@ -634,23 +683,100 @@ urls_open_at_position(struct seat *seat, struct terminal *term,
     if (matched_url == NULL)
         return false;
 
-    const struct config_spawn_template *launch = &term->conf->url.launch;
-    struct click_activation_context *ctx = xmalloc(sizeof(*ctx));
-    *ctx = (struct click_activation_context){
-        .term = term,
-        .url = matched_url,
-        .launch = launch,
-    };
-
-    if (wayl_get_activation_token(
-            seat->wayl, seat, serial, term->window,
-            &click_activation_token_done, ctx))
+    /* A link to a local file opens the file manager, like a clicked path */
+    const struct config_spawn_template *file_launch = &term->conf->url.file_launch;
+    if (file_launch->argv.args != NULL &&
+        strncmp(matched_url, "file:", 5) == 0)
     {
-        return true;
+        char *path = existing_file_from_uri(matched_url);
+        if (path != NULL) {
+            free(matched_url);
+            click_launch(seat, term, serial, file_launch, NULL, path);
+            return true;
+        }
     }
 
-    /* Fallback: launch without activation token */
-    click_activation_token_done(NULL, ctx);
+    click_launch(seat, term, serial, &term->conf->url.launch,
+                 matched_url, NULL);
+    return true;
+}
+
+/* A path-like word: no whitespace, quotes, brackets or list separators,
+ * and at least one '/' or '.' */
+#define PATH_CHAR "[^][[:space:]\"'`(){}<>|,;]"
+#define PATH_REGEX "(" PATH_CHAR "*[/.]" PATH_CHAR "*)"
+
+/* Absolute path of an existing file named by a clicked word, looked up
+ * relative to the foreground process's working directory, then the
+ * shell's */
+static char *
+existing_file_from_word(const struct terminal *term, char *word)
+{
+    file_link_clean(word);
+
+    char fg_cwd[PATH_MAX];
+    char shell_cwd[PATH_MAX];
+    const char *cwds[2] = {NULL, NULL};
+
+    const pid_t fg = term_foreground_pgid(term);
+    if (fg > 0) {
+        char proc_path[64];
+        snprintf(proc_path, sizeof(proc_path), "/proc/%d/cwd", (int)fg);
+        ssize_t n = readlink(proc_path, fg_cwd, sizeof(fg_cwd) - 1);
+        if (n > 0) {
+            fg_cwd[n] = '\0';
+            cwds[0] = fg_cwd;
+        }
+    }
+    cwds[1] = term_shell_cwd(term, shell_cwd, sizeof(shell_cwd));
+
+    const char *home = getenv("HOME");
+    for (size_t i = 0; i < ALEN(cwds); i++) {
+        char *path = file_link_resolve(word, cwds[i], home);
+        struct stat st;
+        if (path != NULL && stat(path, &st) == 0)
+            return path;
+        free(path);
+    }
+
+    return NULL;
+}
+
+bool
+files_open_at_position(struct seat *seat, struct terminal *term,
+                       int col, int row, uint32_t serial)
+{
+    const struct config_spawn_template *launch = &term->conf->url.file_launch;
+    if (launch->argv.args == NULL)
+        return false;
+
+    static regex_t preg;
+    static bool preg_ready = false;
+    if (!preg_ready) {
+        if (regcomp(&preg, PATH_REGEX, REG_EXTENDED) != 0) {
+            LOG_ERR("failed to compile the file path regex");
+            return false;
+        }
+        preg_ready = true;
+    }
+
+    const int abs_row = term->grid->view + row;
+
+    url_list_t words = tll_init();
+    regex_detected(term, URL_ACTION_LAUNCH, &preg, &words);
+
+    char *path = NULL;
+    tll_foreach(words, it) {
+        if (path == NULL && url_covers(&it->item, col, abs_row))
+            path = existing_file_from_word(term, it->item.url);
+        url_destroy(&it->item);
+        tll_remove(words, it);
+    }
+
+    if (path == NULL)
+        return false;
+
+    click_launch(seat, term, serial, launch, NULL, path);
     return true;
 }
 

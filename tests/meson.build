@@ -8,6 +8,15 @@ config_test = executable(
 
 test('config', config_test)
 
+file_link_test = executable(
+  'test-file-link',
+  'test-file-link.c',
+  '../file-link.c',
+  '../uri.c',
+  link_with: [common])
+
+test('file-link', file_link_test)
+
 help_layout_test = executable(
   'test-help-layout',
   'test-help-layout.c',

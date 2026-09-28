@@ -324,6 +324,7 @@ struct config {
     struct {
         char32_t *label_letters;
         struct config_spawn_template launch;
+        struct config_spawn_template file_launch;
         enum {
             OSC8_UNDERLINE_URL_MODE,
             OSC8_UNDERLINE_ALWAYS,

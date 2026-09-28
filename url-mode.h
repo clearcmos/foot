@@ -25,6 +25,12 @@ bool urls_open_at_position(
     struct seat *seat, struct terminal *term,
     int col, int row, uint32_t serial);
 
+/* Ctrl+click on a word naming an existing file (a path, optionally with a
+ * :line suffix) runs [url] file-launch to show it in the file manager. */
+bool files_open_at_position(
+    struct seat *seat, struct terminal *term,
+    int col, int row, uint32_t serial);
+
 void urls_hover_update(struct terminal *term, int col, int row);
 void urls_hover_clear(struct terminal *term);
 

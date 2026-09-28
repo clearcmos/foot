@@ -11,7 +11,7 @@ This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom mo
 - Pinned tabs (Ctrl+D): compact square tabs kept at the far left
 - Split pane mode (Ctrl+E): all tabs shown as simultaneously visible panes
 - Keyboard shortcuts help overlay (F1)
-- Mouse extras: URL underline on hover, Ctrl+Click to open URLs, right-click copies the active selection
+- Mouse extras: URL underline on hover, Ctrl+Click to open URLs or show a file in the file manager, right-click copies the active selection
 - `${pty}` template variable in the `[bell]` command, so a bell command can tell which tab rang
 - Custom default keybindings (Ctrl+T, Ctrl+W, Ctrl+Tab, and more)
 
@@ -113,6 +113,9 @@ This fork adds multi-tab support:
   it (`[tab-bar]` in foot.ini, default: Claude orange, Codex green,
   Antigravity blue)
 * Ctrl+Click to open URLs in the default browser; URLs underline on hover
+* Ctrl+Click a file name in the output (`render.c:3058`, `~/notes.md`, a
+  `file://` link) to show it in the file manager, selected in its folder
+  (`[url] file-launch`)
 * Right-click to copy selected text to clipboard
 * Ctrl+A copies the whole scrollback; PageUp/PageDown and Shift+Home/End
   scroll it
@@ -326,8 +329,8 @@ These are the default shortcuts. See `man foot.ini` and the example
 : Holding <kbd>ctrl</kbd> will create a block selection.
 
 <kbd>ctrl</kbd>+<kbd>left</kbd>
-: Open the URL under the pointer. Anywhere else, starts a block
-  selection
+: Open the URL under the pointer, or show the file named under the
+  pointer in the file manager. Anywhere else, starts a block selection
 
 <kbd>left</kbd> - **double-click**
 : Selects the _word_ (separated by spaces, period, comma, parenthesis

@@ -379,8 +379,9 @@ These shortcuts affect scrolling in scrollback-search mode:
 	Holding *ctrl* will create a block selection.
 
 *ctrl*+*left*
-	Open the URL under the pointer. Anywhere else, starts a block
-	selection.
+	Open the URL under the pointer, or show the file named under the
+	pointer in the file manager (see *file-launch* in *foot.ini*(5)).
+	Anywhere else, starts a block selection.
 
 *left*, double-click
 	Selects the _word_ (separated by spaces, period, comma,

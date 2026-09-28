@@ -677,6 +677,8 @@ test_section_url(void)
     test_invalid_key(&ctx, &parse_section_url, "invalid-key");
 
     test_spawn_template(&ctx, &parse_section_url, "launch", &conf.url.launch);
+    test_spawn_template(
+        &ctx, &parse_section_url, "file-launch", &conf.url.file_launch);
     test_enum(&ctx, &parse_section_url, "osc8-underline",
               2,
               (const char *[]){"url-mode", "always"},

@@ -1359,6 +1359,9 @@ parse_section_url(struct context *ctx)
     if (streq(key, "launch"))
         return value_to_spawn_template(ctx, &conf->url.launch);
 
+    else if (streq(key, "file-launch"))
+        return value_to_spawn_template(ctx, &conf->url.file_launch);
+
     else if (streq(key, "label-letters"))
         return value_to_wchars(ctx, &conf->url.label_letters);
 
@@ -3733,6 +3736,12 @@ config_load(struct config *conf, const char *conf_path,
         &conf->desktop_notifications.command.argv.args);
     tokenize_cmdline("--action ${action-name}=${action-label}", &conf->desktop_notifications.command_action_arg.argv.args);
     tokenize_cmdline("xdg-open ${url}", &conf->url.launch.argv.args);
+    tokenize_cmdline(
+        "dbus-send --session --type=method_call "
+        "--dest=org.freedesktop.FileManager1 /org/freedesktop/FileManager1 "
+        "org.freedesktop.FileManager1.ShowItems "
+        "array:string:${uri} string:${activation-token}",
+        &conf->url.file_launch.argv.args);
 
     {
     const char *url_regex_string =
@@ -4038,6 +4047,7 @@ config_clone(const struct config *old)
 
     conf->url.label_letters = xc32dup(old->url.label_letters);
     spawn_template_clone(&conf->url.launch, &old->url.launch);
+    spawn_template_clone(&conf->url.file_launch, &old->url.file_launch);
     conf->url.regex = xstrdup(old->url.regex);
     regcomp(&conf->url.preg, conf->url.regex, REG_EXTENDED);
 
@@ -4139,6 +4149,7 @@ config_free(struct config *conf)
 
     free(conf->url.label_letters);
     spawn_template_free(&conf->url.launch);
+    spawn_template_free(&conf->url.file_launch);
     regfree(&conf->url.preg);
     free(conf->url.regex);
 

@@ -64,10 +64,12 @@ whitespace set by `.editorconfig`: reformatting upstream files with
 clang-format would turn every upstream merge into conflicts.
 
 Only the fork's pure logic has unit tests (`tests/test-tab-*.c`,
-`tests/test-window-state.c`, `tests/test-help-layout.c`). `tab.c` and the window-state I/O in
+`tests/test-window-state.c`, `tests/test-help-layout.c`,
+`tests/test-file-link.c`). `tab.c` and the window-state I/O in
 `terminal.c` have no test files of their own because they need a live
 compositor: move pure decisions out into small helpers (`tab-close.c`,
-`tab-pin.c`, `tab-activity.c`, `window-state.c`, `help-layout.c`) and test them there, and exercise the rest with the
+`tab-pin.c`, `tab-activity.c`, `window-state.c`, `help-layout.c`,
+`file-link.c`) and test them there, and exercise the rest with the
 nested-compositor smoke run above. Upstream modules keep upstream's coverage.
 
 ## Distribution and changelog
@@ -175,6 +177,7 @@ Key implementation details:
 
 - URLs are underlined on hover. `urls_hover_update()` / `urls_hover_clear()` in `url-mode.c` manage a cached URL list (`term->url_hover`) and toggle `cell->attrs.url` on the live grid. The cache is dropped on scroll (view offset change) and by `fdm_ptmx()` whenever PTY output changes the grid; the next pointer motion rebuilds it.
 - Ctrl+Click opens URLs under the cursor in the default browser. Uses `urls_collect()` to find regex and OSC-8 URLs, then `urls_open_at_position()` in `url-mode.c` launches via the configured URL launcher with XDG activation token support.
+- When no URL is under the cursor, `files_open_at_position()` scans the view with a path-like regex (`PATH_REGEX` in `url-mode.c`, reusing `regex_detected()` so wrapped lines work), cleans the clicked word with `file_link_clean()`, resolves it against the foreground process's cwd and then the shell's, and runs `[url] file-launch` if the file exists. A clicked `file:` URL of an existing local file goes to `file-launch` too. The default launcher calls `org.freedesktop.FileManager1.ShowItems` through `dbus-send`, passing the activation token as the startup id so the file manager takes focus. The string handling (clean, resolve, URI to path and back) lives in `file-link.c` and is unit-tested in `tests/test-file-link.c`; `file_link_path_from_uri()` wraps upstream's `uri_parse()`, which requires a non-NULL scheme pointer.
 - Right-click with an active selection copies the selected text to clipboard and deselects. No flash notification -- the deselection itself is the feedback.
 - Flash notifications are centered, including the Ctrl+A select-all flash. `render_flash_message()` can anchor the pill at the mouse cursor when `term->flash.use_mouse_pos` is set, but nothing sets it.
 
@@ -223,6 +226,10 @@ The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-ali
 
 Dated reasons for choices that are not obvious from the code.
 
+- 2026-09-28: Ctrl+click on a file name shows the file selected in the file
+  manager instead of opening it, as the user asked; `[url] file-launch`
+  changes that. The default goes through the FileManager1 D-Bus interface
+  rather than a named file manager so it works outside KDE.
 - 2026-09-28: The nested-compositor smoke run goes through
   `dbus-run-session`. Without it, each run disabled the desktop's KWin
   shortcuts until the next login.

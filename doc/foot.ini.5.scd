@@ -911,6 +911,27 @@ section.
 	Command to execute when opening URLs. _${url}_ will be replaced
 	with the actual URL. Default: _xdg-open ${url}_.
 
+*file-launch*
+	Command to execute when *ctrl*+clicking the name of an existing file,
+	or a _file:_ URL of a local file. A word counts as a file name when
+	it contains a _/_ or a _._; a trailing _:line_ or _:line:column_ and
+	sentence punctuation are ignored. Relative names are looked up in
+	the working directory of the terminal's foreground process, then in
+	the shell's.
+
+	_${path}_ is replaced with the file's absolute path, _${uri}_ with its
+	_file://_ URI, and _${activation-token}_ with an XDG activation token
+	(empty if none), which lets the launched program take focus.
+
+	The default shows the file in the file manager, selected in its
+	folder, through the _org.freedesktop.FileManager1_ D-Bus interface
+	(supported by Dolphin, Nautilus and others). Set this to the empty
+	string (*""*) to disable it.
+
+	Default: _dbus-send --session --type=method\_call --dest=org.freedesktop.FileManager1
+	/org/freedesktop/FileManager1 org.freedesktop.FileManager1.ShowItems
+	array:string:${uri} string:${activation-token}_.
+
 *osc8-underline*
 	When to underline OSC-8 URLs. Possible values are *url-mode* and
 	*always*.

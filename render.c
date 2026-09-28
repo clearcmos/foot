@@ -2426,7 +2426,7 @@ render_overlay(struct terminal *term)
             {"Right-click",       "Copy selection"},
             {NULL, NULL},
             {"Ctrl+F",            "Search"},
-            {"Ctrl+Click",        "Open URL"},
+            {"Ctrl+Click",        "Open URL / show file"},
             {"PgUp/PgDn",         "Scroll a page"},
             {"Shift+Home/End",    "Scroll to top/bottom"},
             {NULL, NULL},

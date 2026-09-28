@@ -322,6 +322,7 @@ executable(
   'extract.c', 'extract.h',
   'fdm.c', 'fdm.h',
   'foot-features.c', 'foot-features.h',
+  'file-link.c', 'file-link.h',
   'help-layout.c', 'help-layout.h',
   'ime.c', 'ime.h',
   'input.c', 'input.h',

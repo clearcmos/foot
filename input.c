@@ -3510,6 +3510,9 @@ wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
                 urls_hover_clear(term);
                 if (urls_open_at_position(
                         seat, term,
+                        seat->mouse.col, seat->mouse.row, serial) ||
+                    files_open_at_position(
+                        seat, term,
                         seat->mouse.col, seat->mouse.row, serial))
                 {
                     consumed = true;
