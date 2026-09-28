@@ -34,6 +34,7 @@
 #include "config.h"
 #include "cursor-shape.h"
 #include "grid.h"
+#include "help-layout.h"
 #include "ime.h"
 #include "quirks.h"
 #include "search.h"
@@ -2150,6 +2151,28 @@ render_overlay_single_pixel(struct terminal *term, enum overlay_style style,
     }
 }
 
+/* The regular font at its configured size, unaffected by zoom, for the
+ * window's own UI (tab bar, help card). Reloaded when the output changes. */
+static struct fcft_font *
+window_ui_font(struct terminal *term)
+{
+    struct tab_bar *tb = &term->window->tab_bar;
+
+    if (tb->font == NULL ||
+        tb->font_dpi != term->font_dpi ||
+        tb->font_scale != term->scale ||
+        tb->font_sized_by_dpi != term->font_is_sized_by_dpi)
+    {
+        fcft_destroy(tb->font);
+        tb->font = term_load_font_at_config_size(term);
+        tb->font_dpi = term->font_dpi;
+        tb->font_scale = term->scale;
+        tb->font_sized_by_dpi = term->font_is_sized_by_dpi;
+    }
+
+    return tb->font != NULL ? tb->font : term->fonts[0];
+}
+
 void
 render_overlay(struct terminal *term)
 {
@@ -2373,18 +2396,20 @@ render_overlay(struct terminal *term)
         render_flash_message(term, buf);
 
     /* Render help card centered on overlay */
-    if (style == OVERLAY_HELP && term->fonts[0] != NULL) {
+    struct fcft_font *help_font =
+        style == OVERLAY_HELP ? window_ui_font(term) : NULL;
+    if (help_font != NULL) {
         const bool gc = wayl_do_linear_blending(term->wl, term->conf);
-        struct fcft_font *font = term->fonts[0];
+        struct fcft_font *font = help_font;
         const enum fcft_subpixel subpixel = term->font_subpixel;
 
         struct help_entry {
-            const char *key;   /* NULL = blank separator line */
-            const char *desc;  /* NULL = single-column line (title/footer) */
+            const char *key;   /* NULL = blank line between groups */
+            const char *desc;
         };
+        static const char title[] = "Keyboard Shortcuts";
+        static const char footer[] = "Press any key to close";
         static const struct help_entry entries[] = {
-            {"Keyboard Shortcuts", NULL},
-            {NULL, NULL},
             {"Ctrl+T",            "New tab"},
             {"Ctrl+W",            "Close tab"},
             {"Ctrl+Tab",          "Next tab"},
@@ -2410,37 +2435,49 @@ render_overlay(struct terminal *term)
             {"Ctrl+Backspace",    "Delete word"},
             {NULL, NULL},
             {"F1",                "This help"},
-            {"Press any key to close", NULL},
         };
         const int entry_count = ALEN(entries);
         const int font_height = font_height_of(font);
         const int line_spacing = font_height + font_height / 4;
         const int pad = font->max_advance.x;
 
-        /* Column widths: widest key, widest description, widest
-         * single-column line */
-        int max_key_w = 0, max_desc_w = 0, max_single_w = 0;
+        int max_key_w = 0, max_desc_w = 0;
         for (int i = 0; i < entry_count; i++) {
             if (entries[i].key == NULL)
                 continue;
-
-            const int kw = text_width_utf8(font, subpixel, entries[i].key);
-            if (entries[i].desc != NULL) {
-                max_key_w = max(max_key_w, kw);
-                max_desc_w = max(
-                    max_desc_w, text_width_utf8(font, subpixel, entries[i].desc));
-            } else
-                max_single_w = max(max_single_w, kw);
+            max_key_w = max(
+                max_key_w, text_width_utf8(font, subpixel, entries[i].key));
+            max_desc_w = max(
+                max_desc_w, text_width_utf8(font, subpixel, entries[i].desc));
         }
 
+        /* Rows left for the entries once the title, the blank line under
+         * it and the footer are placed */
+        const int fit_rows = (term->height - pad * 2) / line_spacing - 3;
+
+        bool blank[ALEN(entries)];
+        for (int i = 0; i < entry_count; i++)
+            blank[i] = entries[i].key == NULL;
+
+        int entry_col[ALEN(entries)];
+        int entry_row[ALEN(entries)];
+        int rows;
+        const int cols = help_layout_flow(
+            blank, entry_count, fit_rows, entry_col, entry_row, &rows);
+
         const int col_gap = pad * 2;
-        const int content_w = max(max_key_w + col_gap + max_desc_w, max_single_w);
+        const int col_w = max_key_w + col_gap + max_desc_w;
+        const int col_sep = pad * 3;
+        const int content_w = max(
+            cols * col_w + (cols - 1) * col_sep,
+            max(text_width_utf8(font, subpixel, title),
+                text_width_utf8(font, subpixel, footer)));
         const int card_w = content_w + pad * 3;
-        const int card_h = entry_count * line_spacing + pad * 2;
+        const int card_h = (rows + 3) * line_spacing + pad * 2;
         const int card_x = max((term->width - card_w) / 2, 0);
         const int card_y = max((term->height - card_h) / 2, 0);
-        const int left_margin = card_x + pad * 3 / 2;
-        const int desc_x = left_margin + max_key_w + col_gap;
+        const int left_margin =
+            card_x + (card_w - (cols * col_w + (cols - 1) * col_sep)) / 2;
 
         /* Draw card background */
         pixman_color_t card_bg = color_hex_to_pixman_with_alpha(
@@ -2466,26 +2503,31 @@ render_overlay(struct terminal *term)
         pixman_color_t text_color = color_hex_to_pixman(0xffcccccc, gc);
         pixman_color_t dim_color = color_hex_to_pixman(0xff888888, gc);
 
+        const int first_baseline = card_y + pad + font->ascent;
+
+        /* Title and footer, centered */
+        const int title_w = text_width_utf8(font, subpixel, title);
+        draw_text_utf8(buf, font, subpixel, title,
+                       card_x + (card_w - title_w) / 2, first_baseline,
+                       &title_color);
+        const int footer_w = text_width_utf8(font, subpixel, footer);
+        draw_text_utf8(buf, font, subpixel, footer,
+                       card_x + (card_w - footer_w) / 2,
+                       first_baseline + (rows + 2) * line_spacing,
+                       &dim_color);
+
+        /* Two-column lines: key on the left, description aligned */
         for (int i = 0; i < entry_count; i++) {
             if (entries[i].key == NULL)
                 continue;
 
-            const int baseline = card_y + pad + i * line_spacing + font->ascent;
-
-            if (entries[i].desc == NULL) {
-                /* Single-column line: title or footer, centered */
-                const int tw = text_width_utf8(font, subpixel, entries[i].key);
-                draw_text_utf8(
-                    buf, font, subpixel, entries[i].key,
-                    card_x + (card_w - tw) / 2, baseline,
-                    i == 0 ? &title_color : &dim_color);
-            } else {
-                /* Two-column line: key on left, description aligned */
-                draw_text_utf8(buf, font, subpixel, entries[i].key,
-                               left_margin, baseline, &text_color);
-                draw_text_utf8(buf, font, subpixel, entries[i].desc,
-                               desc_x, baseline, &text_color);
-            }
+            const int x = left_margin + entry_col[i] * (col_w + col_sep);
+            const int baseline =
+                first_baseline + (entry_row[i] + 2) * line_spacing;
+            draw_text_utf8(buf, font, subpixel, entries[i].key,
+                           x, baseline, &text_color);
+            draw_text_utf8(buf, font, subpixel, entries[i].desc,
+                           x + max_key_w + col_gap, baseline, &text_color);
         }
 
         /* Separator line under title */
@@ -3009,20 +3051,7 @@ render_tab_bar(struct terminal *term)
     int x = 0;
     int idx = 0;
 
-    if (tb->font == NULL ||
-        tb->font_dpi != term->font_dpi ||
-        tb->font_scale != term->scale ||
-        tb->font_sized_by_dpi != term->font_is_sized_by_dpi)
-    {
-        /* Configured size, independent of zoom, for the current output */
-        fcft_destroy(tb->font);
-        tb->font = term_load_font_at_config_size(term);
-        tb->font_dpi = term->font_dpi;
-        tb->font_scale = term->scale;
-        tb->font_sized_by_dpi = term->font_is_sized_by_dpi;
-    }
-
-    struct fcft_font *font = tb->font != NULL ? tb->font : term->fonts[0];
+    struct fcft_font *font = window_ui_font(term);
     if (font == NULL)
         goto commit;
 

@@ -64,10 +64,10 @@ whitespace set by `.editorconfig`: reformatting upstream files with
 clang-format would turn every upstream merge into conflicts.
 
 Only the fork's pure logic has unit tests (`tests/test-tab-*.c`,
-`tests/test-window-state.c`). `tab.c` and the window-state I/O in
+`tests/test-window-state.c`, `tests/test-help-layout.c`). `tab.c` and the window-state I/O in
 `terminal.c` have no test files of their own because they need a live
 compositor: move pure decisions out into small helpers (`tab-close.c`,
-`tab-pin.c`, `tab-activity.c`, `window-state.c`) and test them there, and exercise the rest with the
+`tab-pin.c`, `tab-activity.c`, `window-state.c`, `help-layout.c`) and test them there, and exercise the rest with the
 nested-compositor smoke run above. Upstream modules keep upstream's coverage.
 
 ## Distribution and changelog
@@ -109,7 +109,7 @@ terminal from its shared window on shutdown, and per-tab title tracking.
 Key implementation details:
 - Tab bar renders as a Wayland subsurface positioned at (0,0), drawn in `render_tab_bar()` in `render.c`. The main surface already sits below any CSD title bar, so no title offset is applied.
 - `tab_bar_height()` returns physical pixels (`roundf(20 * scale)`). This value must be included in `set_size_from_grid()` and subtracted from available height in `render_resize()` margin calculations.
-- The bar's font is the regular font at its configured size (zoom-independent), loaded by `term_load_font_at_config_size()` and reloaded lazily in `render_tab_bar()` when the DPI or scale changes.
+- The bar's font is the regular font at its configured size (zoom-independent), loaded by `term_load_font_at_config_size()` and reloaded lazily by `window_ui_font()` in `render.c` when the DPI or scale changes. The help card shares it.
 - Tab titles show the shell's current working directory, read from `/proc/<pid>/cwd` via `term_shell_cwd()`. `$HOME` is collapsed to `~`. Titles are refreshed from `tab_on_output()` on PTY output (debounced to 250 ms, a cwd change always comes with a new prompt), on OSC 7, and on window title changes. Nothing polls `/proc` from the render path.
 - Unpinned tab widths are equal, dividing the bar width left after pinned tabs evenly (`tab_pin_widths()` in `tab-pin.c`). Remainder pixels go to the leftmost unpinned tabs. Cumulative x positions stored in `tab_bar.tab_x_ends` for mouse hit-testing in `input.c`.
 - Each tab is enclosed in a 1px border (all four sides) drawn with foreground color at `0x4000` alpha.
@@ -178,7 +178,7 @@ Key implementation details:
 
 ## Help overlay (custom feature)
 
-F1 toggles a keyboard shortcuts help card rendered as an `OVERLAY_HELP` overlay in `render_overlay()` in `render.c`. The card uses a two-column layout (key + description) with fixed pixel column positions for alignment. State is tracked via `term->help_visible` in `terminal.h`. Any keypress dismisses the overlay (handled in `key_press_release()` in `input.c` before normal binding dispatch). The `BIND_ACTION_SHOW_HELP` action is defined in `key-binding.h` with default F1 binding in `config.c`.
+F1 toggles a keyboard shortcuts help card rendered as an `OVERLAY_HELP` overlay in `render_overlay()` in `render.c`. Each entry is a key and a description in aligned columns. The card uses the zoom-independent tab bar font (`window_ui_font()`), and when it is still taller than the window its groups flow into side-by-side columns of even height, breaking only at the blank lines between groups (`help_layout_flow()` in `help-layout.c`, unit-tested in `tests/test-help-layout.c`). State is tracked via `term->help_visible` in `terminal.h`. Any keypress dismisses the overlay (handled in `key_press_release()` in `input.c` before normal binding dispatch). The `BIND_ACTION_SHOW_HELP` action is defined in `key-binding.h` with default F1 binding in `config.c`.
 
 ## Window state persistence (custom feature)
 
@@ -225,6 +225,10 @@ The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-ali
 
 Dated reasons for choices that are not obvious from the code.
 
+- 2026-09-28: The help card is drawn with the unzoomed tab bar font and
+  flows into more columns when the window is too short. It used the
+  zoomed terminal font, so after zooming in it grew taller than a
+  maximized window and its bottom rows were cut off.
 - 2026-09-28: The tab activity indicator animates when a run ends, not
   while it runs. The start of motion catches the eye and the end of motion
   does not (Abrams & Christ 2003), so the old pulse-while-working drew

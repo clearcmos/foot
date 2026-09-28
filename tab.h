@@ -42,8 +42,9 @@ struct tab_bar {
     struct wayl_sub_surface *surface;
     struct buffer_chain *chain;
 
-    /* Regular font at the configured size (unaffected by zoom), loaded
-     * lazily for the DPI/scale recorded alongside it */
+    /* Regular font at the configured size (unaffected by zoom) for the
+     * tab bar and the help card, loaded lazily for the DPI/scale recorded
+     * alongside it */
     struct fcft_font *font;
     float font_dpi;
     float font_scale;

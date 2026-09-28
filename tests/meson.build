@@ -8,6 +8,13 @@ config_test = executable(
 
 test('config', config_test)
 
+help_layout_test = executable(
+  'test-help-layout',
+  'test-help-layout.c',
+  '../help-layout.c')
+
+test('help-layout', help_layout_test)
+
 tab_close_test = executable(
   'test-tab-close',
   'test-tab-close.c',
