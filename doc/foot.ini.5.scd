@@ -1601,13 +1601,13 @@ scrollback search mode. The syntax is exactly the same as the regular
 
 *cancel*
 	Aborts the search. The viewport is restored and the _primary
-	selection_ is **not** updated. Default: _Control+g Control+c
-	Escape_.
+	selection_ is **not** updated. Default: _Control+g Control+c_.
 
 *commit*
 	Exit search mode and copy current selection into the _primary
 	selection_. Viewport is **not** restored. To copy the selection to
-	the regular _clipboard_, use *Control+Shift+c*. Default: _none_.
+	the regular _clipboard_, use *Control+Shift+c*. Default: _Escape
+	Control+f_.
 
 *find-prev*
 	Search **backwards** in the scrollback history for the next
@@ -1627,7 +1627,7 @@ scrollback search mode. The syntax is exactly the same as the regular
 
 *cursor-right*
 	Moves the cursor in the search box one **character** to the
-	right. Default: _Right Control+f_.
+	right. Default: _Right_.
 
 *cursor-right-word*
 	Moves the cursor in the search box one **word** to the

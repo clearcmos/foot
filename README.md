@@ -110,6 +110,9 @@ This fork adds multi-tab support:
 * Right-click to copy selected text to clipboard
 * Ctrl+A copies the whole scrollback; PageUp/PageDown and Shift+Home/End
   scroll it
+* Ctrl+F searches the scrollback. Escape or Ctrl+F again closes the
+  search and leaves the view at the match, selected, so it can be read
+  or copied; Ctrl+G or Ctrl+C returns to where the view was
 * F1 shows a keyboard shortcut card
 * The last window size, maximized state and zoom level are remembered
   across restarts in `$XDG_STATE_HOME/foot/state`, as fallbacks for
@@ -251,12 +254,15 @@ These are the default shortcuts. See `man foot.ini` and the example
 <kbd>shift</kbd>+<kbd>insert</kbd>
 : Paste from primary selection into the search buffer.
 
-<kbd>escape</kbd>, <kbd>ctrl</kbd>+<kbd>g</kbd>
-: Cancel the search
+<kbd>ctrl</kbd>+<kbd>g</kbd>, <kbd>ctrl</kbd>+<kbd>c</kbd>
+: Cancel the search and return to where the view was
 
-<kbd>return</kbd>
-: Finish the search and copy the current match to the primary
-  selection
+<kbd>escape</kbd>, <kbd>ctrl</kbd>+<kbd>f</kbd>
+: Finish the search and stay at the current match, which stays
+  selected and is copied to the primary selection
+
+<kbd>return</kbd>, <kbd>shift</kbd>+<kbd>return</kbd>
+: Find the next or previous match
 
 
 ### URL mode
