@@ -30,7 +30,7 @@ struct tab {
     struct timespec last_fg_check;
     pid_t cached_fg_pgid;
     bool fg_activity_match;
-    uint32_t fg_activity_color;         /* pulse color when matched */
+    uint32_t fg_activity_color;         /* indicator color when matched */
     struct tab_activity_run activity;   /* working/done state while hidden */
 };
 
@@ -177,7 +177,10 @@ int tab_bar_height(const struct terminal *term);
  * timer while that tab is hidden. */
 void tab_on_output(struct terminal *term);
 
-/* The tab's activity indicator: a pulse while a configured process works
- * in a hidden tab, a steady mark once it stops, until the tab is shown. */
+/* The tab's activity indicator: a dim mark while a configured process
+ * works in a hidden tab, a short flash once it stops, then a bright mark
+ * until the tab is shown. For TAB_ACTIVITY_FINISHED, *flash_level is the
+ * flash brightness in [0, 1]; otherwise it is 0. */
 enum tab_activity_state tab_bar_activity_state(struct tab_bar *tb,
-                                               struct tab *tab);
+                                               struct tab *tab,
+                                               double *flash_level);

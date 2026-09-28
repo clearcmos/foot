@@ -3050,24 +3050,12 @@ render_tab_bar(struct terminal *term)
         }
     }
 
-    /* Compute pulse phase once per render - same phase across all tabs */
-    uint16_t pulse_alpha = 0;
-    {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        /* 1.0s period: smooth sine in [0,1] */
-        double t = (double)now.tv_sec + (double)now.tv_nsec / 1e9;
-        double phase = sin(t * (2.0 * M_PI / 1.0));
-        /* Map [-1,1] -> [0.30, 0.85] for the overlay alpha */
-        double a = 0.575 + 0.275 * phase;
-        pulse_alpha = (uint16_t)(a * 0xffff);
-    }
-
     tll_foreach(tb->tabs, it) {
         bool is_active = (&it->item == tb->active);
         bool is_hovered = (idx == tb->hovered_tab && !is_active);
+        double flash_level;
         const enum tab_activity_state activity =
-            tab_bar_activity_state(tb, &it->item);
+            tab_bar_activity_state(tb, &it->item, &flash_level);
         const int tab_width = tab_widths[idx];
 
         /* Tab background */
@@ -3092,21 +3080,26 @@ render_tab_bar(struct terminal *term)
                 &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
         }
 
-        /* Pulse while a configured process works in a hidden tab, then a
-         * steady mark at the pulse's peak until the tab is shown */
+        /* A dim mark while a configured process works in a hidden tab.
+         * Once it stops, the mark flashes and settles bright until the
+         * tab is shown */
         if (activity != TAB_ACTIVITY_NONE) {
-            const uint32_t pulse_color =
+            const double dim = 0.30, bright = 0.85;
+            const double level =
+                activity == TAB_ACTIVITY_WORKING ? 0. :
+                activity == TAB_ACTIVITY_DONE ? 1. : flash_level;
+            const uint32_t mark_color =
                 0xff000000 | it->item.fg_activity_color;
-            const uint16_t alpha = activity == TAB_ACTIVITY_WORKING
-                ? pulse_alpha
-                : (uint16_t)(0.85 * 0xffff);
-            pixman_color_t pulse = color_hex_to_pixman_with_alpha(
-                pulse_color, alpha, gamma_correct);
+            pixman_color_t mark = color_hex_to_pixman_with_alpha(
+                mark_color,
+                (uint16_t)((dim + (bright - dim) * level) * 0xffff),
+                gamma_correct);
             pixman_image_fill_rectangles(
-                PIXMAN_OP_OVER, buf->pix[0], &pulse, 1,
+                PIXMAN_OP_OVER, buf->pix[0], &mark, 1,
                 &(pixman_rectangle16_t){x, 0, tab_width, buf_height});
-            /* Black text on the pulse for legibility */
-            tab_fg = 0xff000000;
+            /* Black text on the bright mark for legibility */
+            if (level >= 0.5)
+                tab_fg = 0xff000000;
         }
 
         /* Tab label, centered and clipped to the tab; pinned tabs have none */

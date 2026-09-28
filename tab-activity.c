@@ -169,12 +169,25 @@ tab_activity_record_output(struct tab_activity_run *run, int64_t now,
 {
     if (!in_run(run, now, quiet_ms)) {
         /* A new run starts; keep the mark the previous one earned */
-        if (!run->visible && run_finished_hidden(run))
+        if (!run->visible && run_finished_hidden(run)) {
             run->done = true;
+            run->done_at = run->last_output + quiet_ms;
+        }
         run->run_start = now;
     }
 
     run->last_output = now;
+}
+
+int64_t
+tab_activity_done_age(const struct tab_activity_run *run, int64_t now,
+                      uint32_t quiet_ms)
+{
+    if (run->visible)
+        return -1;
+    if (!in_run(run, now, quiet_ms) && run_finished_hidden(run))
+        return now - (run->last_output + quiet_ms);
+    return run->done ? now - run->done_at : -1;
 }
 
 enum tab_activity_state
@@ -184,19 +197,40 @@ tab_activity_state(const struct tab_activity_run *run, int64_t now,
     if (run->visible)
         return TAB_ACTIVITY_NONE;
 
-    if (in_run(run, now, quiet_ms)) {
-        if (now - run->run_start >= TAB_ACTIVITY_MIN_RUN_MS)
-            return TAB_ACTIVITY_WORKING;
-    } else if (run_finished_hidden(run)) {
-        return TAB_ACTIVITY_DONE;
+    if (in_run(run, now, quiet_ms) &&
+        now - run->run_start >= TAB_ACTIVITY_MIN_RUN_MS)
+    {
+        return TAB_ACTIVITY_WORKING;
     }
 
-    return run->done ? TAB_ACTIVITY_DONE : TAB_ACTIVITY_NONE;
+    const int64_t age = tab_activity_done_age(run, now, quiet_ms);
+    if (age < 0)
+        return TAB_ACTIVITY_NONE;
+    return age < TAB_ACTIVITY_FLASH_MS
+        ? TAB_ACTIVITY_FINISHED
+        : TAB_ACTIVITY_DONE;
+}
+
+double
+tab_activity_flash_level(int64_t age_ms)
+{
+    if (age_ms <= 0)
+        return 0.;
+    if (age_ms >= TAB_ACTIVITY_FLASH_MS)
+        return 1.;
+
+    /* Triangle wave rising from 0, eased at its turning points */
+    const double p = (double)(age_ms % TAB_ACTIVITY_FLASH_PERIOD_MS) /
+        TAB_ACTIVITY_FLASH_PERIOD_MS;
+    const double tri = p < .5 ? 2. * p : 2. - 2. * p;
+    return tri * tri * (3. - 2. * tri);
 }
 
 bool
-tab_activity_run_pending(const struct tab_activity_run *run, int64_t now,
-                         uint32_t quiet_ms)
+tab_activity_changing(const struct tab_activity_run *run, int64_t now,
+                      uint32_t quiet_ms)
 {
-    return !run->visible && in_run(run, now, quiet_ms);
+    return !run->visible &&
+        (in_run(run, now, quiet_ms) ||
+         tab_activity_state(run, now, quiet_ms) == TAB_ACTIVITY_FINISHED);
 }

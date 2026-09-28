@@ -833,11 +833,11 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 
 *activity-pulse*
 	Boolean. When enabled, a background tab whose foreground process
-	matches *activity-pulse-processes* pulses while that process is
-	producing terminal output. Once the output stops, the tab stays
-	highlighted until you switch to it, so a finished or waiting agent
-	stands out. The tab you are looking at (and every pane in split mode)
-	shows no indicator. Output only counts once it has continued for about
+	matches *activity-pulse-processes* is tinted dimly while that process
+	is producing terminal output. Once the output stops, the tab pulses
+	three times and then stays brightly highlighted until you switch to
+	it, so a finished or waiting agent stands out. The tab you are looking
+	at (and every pane in split mode) shows no indicator. Output only counts once it has continued for about
 	a second, so a one-off redraw, such as a TUI repainting when its tab
 	loses focus, does not mark the tab.
 
@@ -845,11 +845,11 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 
 *activity-pulse-processes*
 	Comma-separated list of foreground process names that should trigger
-	the activity pulse. Names are matched exactly against the operating
+	the activity indicator. Names are matched exactly against the operating
 	system's process name. Whitespace around names is ignored.
 
 	Each name can be followed by *:RRGGBB* to give that process its own
-	pulse color. Names without a color use *activity-pulse-color*.
+	indicator color. Names without a color use *activity-pulse-color*.
 
 	Set this to the empty string (*""*) to match no processes.
 
@@ -857,7 +857,7 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 	Antigravity in their brand colors).
 
 *activity-pulse-color*
-	RGB color used for the activity pulse of processes listed in
+	RGB color used for the activity indicator of processes listed in
 	*activity-pulse-processes* without a color of their own.
 
 	Default: _00cc33_.

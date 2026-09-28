@@ -101,10 +101,11 @@ This fork adds multi-tab support:
 * Click a tab to switch to it; hovering highlights it
 * Ctrl+E toggles a split view showing every tab as a live pane
 * `footclient --tab` opens a new tab in the focused window
-* Background tabs running a configured process pulse in that process's
-  color while it produces output, then stay highlighted once it stops
-  until you switch to them (`[tab-bar]` in foot.ini, default: Claude
-  orange, Codex green, Antigravity blue)
+* Background tabs running a configured process show a dim tint in that
+  process's color while it produces output. When it stops, the tab
+  pulses three times and stays brightly highlighted until you switch to
+  it (`[tab-bar]` in foot.ini, default: Claude orange, Codex green,
+  Antigravity blue)
 * Ctrl+Click to open URLs in the default browser; URLs underline on hover
 * Right-click to copy selected text to clipboard
 * Ctrl+A copies the whole scrollback; PageUp/PageDown and Shift+Home/End

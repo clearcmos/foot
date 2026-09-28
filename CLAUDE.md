@@ -121,20 +121,24 @@ Key implementation details:
   `activity-pulse-processes` is a comma-separated list of `name[:RRGGBB]`
   entries (default `claude:d97757,codex:10a37f,agy:1a73e8`); names without a
   color use `activity-pulse-color` (`00cc33`). Only hidden tabs show it (not
-  the active tab, not any pane in split mode): a hidden tab pulses while its
-  matched process produces a run of output, then stays solid once the run
-  ends (`activity-pulse-quiet-ms` of silence, default 700) until the tab is
-  shown. A run must last `TAB_ACTIVITY_MIN_RUN_MS` (1 s) to count, because
-  Claude Code repaints on focus-out and that burst must not mark the tab.
-  The working/done state machine is pure and unit-tested in
+  the active tab, not any pane in split mode): a hidden tab shows a dim
+  steady tint while its matched process produces a run of output. When the
+  run ends (`activity-pulse-quiet-ms` of silence, default 700) the tab
+  flashes three times over `TAB_ACTIVITY_FLASH_MS` (2 s), ending on a peak,
+  and stays bright until the tab is shown. A run must last
+  `TAB_ACTIVITY_MIN_RUN_MS` (1 s) to count, because Claude Code repaints
+  on focus-out and that burst must not mark the tab. The
+  working/finished/done state machine and the flash curve
+  (`tab_activity_flash_level()`) are pure and unit-tested in
   `tab-activity.c` (`struct tab_activity_run`, `tests/test-tab-activity.c`),
   along with process-list matching and color lookup; `tab.c` feeds it from
   `tab_on_output()` and derives visibility lazily, so tab switches need no
   hook. `term_foreground_pgid()` / `term_process_comm()` in `terminal.c` read
   the foreground process from `/proc`, and `render.c` draws the indicator.
-  The pulse timer only marks the bar dirty; the render hook renders just the
-  bar and then commits the window surface, since the bar is a synchronized
-  subsurface whose commit does not show until its parent commits.
+  The pulse timer ticks while a run or a flash is in progress and only
+  marks the bar dirty; the render hook renders just the bar and then
+  commits the window surface, since the bar is a synchronized subsurface
+  whose commit does not show until its parent commits.
 
 Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev). Also Ctrl+PageDown/PageUp and Shift+Left/Right for next/prev. Ctrl+E toggles split pane mode. Ctrl+D pins/unpins the active tab. Ctrl+Left/Right sends ESC b/f for word movement and Ctrl+Backspace sends ^W to delete the previous word. Ctrl+F starts scrollback search, where Enter and Shift+Enter find the next and previous match. PageUp/PageDown scroll the scrollback by a page and Shift+Home/Shift+End jump to its top/bottom (bare Home/End reach the shell). F1 shows the keyboard shortcuts help card; keep its entry table in `render_overlay()` in sync with the default bindings in `config.c`.
 
@@ -221,6 +225,12 @@ The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-ali
 
 Dated reasons for choices that are not obvious from the code.
 
+- 2026-09-28: The tab activity indicator animates when a run ends, not
+  while it runs. The start of motion catches the eye and the end of motion
+  does not (Abrams & Christ 2003), so the old pulse-while-working drew
+  attention when work began and let the finish, the moment that needs the
+  user, pass unnoticed. The flash is three pulses, not an endless pulse,
+  so several finished tabs do not keep moving.
 - 2026-09-27: Each action's default bindings stay adjacent in
   `add_default_key_bindings()`. Overriding an action removes its defaults
   as one contiguous run, so the split-up `spawn-terminal` and

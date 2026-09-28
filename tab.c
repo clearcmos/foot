@@ -1061,14 +1061,14 @@ fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data)
     ssize_t r = read(fd, &expirations, sizeof(expirations));
     (void)r;
 
-    /* Keep ticking while a hidden tab's run of output is ongoing; the
-     * final tick draws the steady mark once the run has ended */
+    /* Keep ticking while a hidden tab's run of output is ongoing or its
+     * finish flash plays; the final tick draws the steady done mark */
     const int64_t now = now_ms();
     const uint32_t quiet_ms = win->term->conf->tab_bar.activity_pulse_quiet_ms;
     bool any_activity = false;
     tll_foreach(tb->tabs, it) {
         update_activity_visibility(tb, &it->item, now);
-        if (tab_activity_run_pending(&it->item.activity, now, quiet_ms))
+        if (tab_activity_changing(&it->item.activity, now, quiet_ms))
             any_activity = true;
     }
 
@@ -1118,14 +1118,24 @@ tab_on_output(struct terminal *term)
 }
 
 enum tab_activity_state
-tab_bar_activity_state(struct tab_bar *tb, struct tab *tab)
+tab_bar_activity_state(struct tab_bar *tb, struct tab *tab,
+                       double *flash_level)
 {
+    *flash_level = 0.;
+
     struct terminal *term = tab->term;
     if (term == NULL)
         return TAB_ACTIVITY_NONE;
 
     const int64_t now = now_ms();
+    const uint32_t quiet_ms = term->conf->tab_bar.activity_pulse_quiet_ms;
     update_activity_visibility(tb, tab, now);
-    return tab_activity_state(
-        &tab->activity, now, term->conf->tab_bar.activity_pulse_quiet_ms);
+
+    const enum tab_activity_state state =
+        tab_activity_state(&tab->activity, now, quiet_ms);
+    if (state == TAB_ACTIVITY_FINISHED) {
+        *flash_level = tab_activity_flash_level(
+            tab_activity_done_age(&tab->activity, now, quiet_ms));
+    }
+    return state;
 }
