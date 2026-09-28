@@ -126,8 +126,8 @@ test_path_to_uri(void)
     CHECK(strcmp(uri, "file:///home/u/My%20Files/a%2Cb~_-.c") == 0);
     free(uri);
 
-    uri = file_link_path_to_uri("/tmp/caf\xc3\xa9");
-    CHECK(strcmp(uri, "file:///tmp/caf%C3%A9") == 0);
+    uri = file_link_path_to_uri("/tmp/\xc3\xa9t\xc3\xa9");
+    CHECK(strcmp(uri, "file:///tmp/%C3%A9t%C3%A9") == 0);
     free(uri);
     return true;
 }
