@@ -23,7 +23,7 @@ meson compile -C build
 meson test -C build
 
 # Smoke-test a build under a nested compositor
-systemd-run --user --scope --collect -q sh -c 'kwin_wayland --virtual --no-lockscreen --no-global-shortcuts --socket wayland-foottest-$$ & sleep 1; WAYLAND_DISPLAY=wayland-foottest-$$ timeout 20 ./build/foot true; kill $!'
+systemd-run --user --scope --collect -q dbus-run-session -- sh -c 'kwin_wayland --virtual --no-lockscreen --no-global-shortcuts --socket wayland-foottest-$$ & sleep 1; WAYLAND_DISPLAY=wayland-foottest-$$ timeout 20 ./build/foot true; kill $!'
 
 # Performance-optimized release build
 meson setup --buildtype=release --prefix=/usr -Db_lto=true build
@@ -31,7 +31,7 @@ meson setup --buildtype=release --prefix=/usr -Db_lto=true build
 
 The build uses meson/ninja. Dependencies (fcft, tllist) are auto-fetched as subprojects if not installed system-wide. GCC produces significantly faster binaries than Clang.
 
-Nested `kwin_wayland --virtual` instances run at realtime priority and keep running if the launching terminal dies, so always start them inside a scope that kills the compositor with the test, as above. Before and after a smoke run, check for leftovers with `ls /run/user/1000/ | grep foottest` and `pgrep -af 'kwin_wayland --virtual'`; kill any that remain.
+Nested `kwin_wayland --virtual` instances run at realtime priority and keep running if the launching terminal dies, so always start them inside a scope that kills the compositor with the test, as above. Always give them a private D-Bus session with `dbus-run-session` too: on the desktop session bus a nested KWin registers as the `kwin` shortcut component with the real session's kglobalaccel (`--no-global-shortcuts` does not prevent it) and marks every KWin shortcut inactive when it exits, so Meta+Arrow, Alt+Tab and the rest stop working until the next login. A run that went wrong shows `Failed to register service org.kde.kglobalaccel` in the journal and `false` from `qdbus6 org.kde.kglobalaccel /component/kwin org.kde.kglobalaccel.Component.isActive`. Before and after a smoke run, check for leftovers with `ls /run/user/1000/ | grep foottest` and `pgrep -af 'kwin_wayland --virtual'`; kill any that remain.
 
 ## Continuous Integration
 
@@ -225,6 +225,9 @@ The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-ali
 
 Dated reasons for choices that are not obvious from the code.
 
+- 2026-09-28: The nested-compositor smoke run goes through
+  `dbus-run-session`. Without it, each run disabled the desktop's KWin
+  shortcuts until the next login.
 - 2026-09-28: The help card is drawn with the unzoomed tab bar font and
   flows into more columns when the window is too short. It used the
   zoomed terminal font, so after zooming in it grew taller than a
