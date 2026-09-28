@@ -138,7 +138,9 @@ Key implementation details:
   The pulse timer ticks while a run or a flash is in progress and only
   marks the bar dirty; the render hook renders just the bar and then
   commits the window surface, since the bar is a synchronized subsurface
-  whose commit does not show until its parent commits.
+  whose commit does not show until its parent commits. Replacing the output
+  heuristic with the agents' own notification signals was evaluated and
+  deferred; `doc/deferred-changes.md` records why and when to revisit.
 
 Keybindings: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new window in same cwd), Ctrl+Tab / Ctrl+Shift+Tab (next/prev). Also Ctrl+PageDown/PageUp and Shift+Left/Right for next/prev. Ctrl+E toggles split pane mode. Ctrl+D pins/unpins the active tab. Ctrl+Left/Right sends ESC b/f for word movement and Ctrl+Backspace sends ^W to delete the previous word. Ctrl+F starts scrollback search, where Enter and Shift+Enter find the next and previous match. In search, Escape and Ctrl+F run `search-bindings` `commit` (close search, keep the view at the match and the match selected) instead of upstream's `cancel`, which Ctrl+G / Ctrl+C still run to restore the view. PageUp/PageDown scroll the scrollback by a page and Shift+Home/Shift+End jump to its top/bottom (bare Home/End reach the shell). F1 shows the keyboard shortcuts help card. When a default binding in `config.c` changes, update its entry table in `render_overlay()`, the shortcut lists in `README.md` and `doc/foot.1.scd`, the defaults in `doc/foot.ini.5.scd`, and the commented defaults in `foot.ini`.
 
