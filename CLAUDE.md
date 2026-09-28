@@ -202,18 +202,14 @@ The file format, the configuration matching, and the zoom math live in
 `tests/test-window-state.c`); `terminal.c` keeps the file path, the I/O, and
 the mapping to and from the terminal and config structs.
 
-## Bell command ${pty} template (legacy compatibility)
+## Bell command ${pty} template (custom feature)
 
 The `[bell]` command in foot.ini supports a `${pty}` template variable that
-expands to the ringing terminal's pty device (e.g. `/dev/pts/5`). Expansion
+expands to the ringing terminal's pty device (e.g. `/dev/pts/5`). Each tab
+has its own pty, so a bell command can tell which tab rang. Expansion
 happens in `term_bell()` in `terminal.c` via `spawn_expand_template()` with
 `ptsname(term->ptmx)`; the expanded argv is freed after spawning. Configs
 without `${pty}` keep working.
-
-This remains for already-running Claude sessions that captured the old hook
-configuration and for the unrelated BEL fallback sound. The current
-`~/git/claude-ai-notifs` Linux path uses OSC 777 plus foot's standard
-`[desktop-notifications]` adapter and does not depend on `${pty}`.
 
 ## Build Options
 

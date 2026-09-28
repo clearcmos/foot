@@ -12,7 +12,7 @@ This is a personal fork of [foot](https://codeberg.org/dnkl/foot) with custom mo
 - Split pane mode (Ctrl+E): all tabs shown as simultaneously visible panes
 - Keyboard shortcuts help overlay (F1)
 - Mouse extras: URL underline on hover, Ctrl+Click to open URLs, right-click copies the active selection
-- `${pty}` template variable in the `[bell]` command for legacy per-tab notification scripts
+- `${pty}` template variable in the `[bell]` command, so a bell command can tell which tab rang
 - Custom default keybindings (Ctrl+T, Ctrl+W, Ctrl+Tab, and more)
 
 Developed and tested on Arch Linux with KDE Plasma (KWin, Wayland). CI
