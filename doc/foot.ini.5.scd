@@ -836,8 +836,7 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 	Boolean. When enabled, a background tab whose foreground process
 	matches *activity-pulse-processes* is tinted dimly while that process
 	is producing terminal output. Once the output stops, the tab pulses
-	three times and then stays brightly highlighted until you switch to
-	it, so a finished or waiting agent stands out. The tab you are looking
+	until you switch to it, so a finished or waiting agent stands out. The tab you are looking
 	at (and every pane in split mode) shows no indicator. Output only counts once it has continued for about
 	a second, so a one-off redraw, such as a TUI repainting when its tab
 	loses focus, does not mark the tab.
