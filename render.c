@@ -3110,13 +3110,11 @@ render_tab_bar(struct terminal *term)
         }
 
         /* A dim mark while a configured process works in a hidden tab.
-         * Once it stops, the mark flashes and settles bright until the
-         * tab is shown */
+         * Once it stops, the mark pulses until the tab is shown */
         if (activity != TAB_ACTIVITY_NONE) {
             const double dim = 0.30, bright = 0.85;
             const double level =
-                activity == TAB_ACTIVITY_WORKING ? 0. :
-                activity == TAB_ACTIVITY_DONE ? 1. : flash_level;
+                activity == TAB_ACTIVITY_WORKING ? 0. : flash_level;
             const uint32_t mark_color =
                 0xff000000 | it->item.fg_activity_color;
             pixman_color_t mark = color_hex_to_pixman_with_alpha(

@@ -31,16 +31,16 @@ bool tab_activity_processes_valid(const char *configured_processes);
 
 /*
  * Output from a matching process in a hidden tab first marks the tab as
- * working. Once it stops, the tab flashes (finished) and then stays marked
- * (done) until it is shown. Only a run of output lasting
+ * working. Once it stops, the tab pulses (finished, then done) until it is
+ * shown. Only a run of output lasting
  * TAB_ACTIVITY_MIN_RUN_MS counts, so one-off redraws, like a TUI repainting
  * when it loses focus, do not mark a tab. A run ends after quiet_ms without
  * output.
  */
 #define TAB_ACTIVITY_MIN_RUN_MS 1000
 
-/* The finish flash: three pulses, ending on the third peak so it runs
- * into the done mark at full brightness */
+/* The finished mark pulses with this period until the tab is shown. The
+ * first TAB_ACTIVITY_FLASH_MS of it is the finished state, the rest done. */
 #define TAB_ACTIVITY_FLASH_PERIOD_MS 800
 #define TAB_ACTIVITY_FLASH_MS 2000
 
@@ -78,11 +78,11 @@ enum tab_activity_state tab_activity_state(const struct tab_activity_run *run,
 int64_t tab_activity_done_age(const struct tab_activity_run *run,
                               int64_t now, uint32_t quiet_ms);
 
-/* Brightness of the finish flash in [0, 1], age_ms after the run ended.
- * Starts at 0 and stays at 1 from TAB_ACTIVITY_FLASH_MS on. */
+/* Brightness of the finished pulse in [0, 1], age_ms after the run ended.
+ * Starts at 0 and repeats every TAB_ACTIVITY_FLASH_PERIOD_MS. */
 double tab_activity_flash_level(int64_t age_ms);
 
 /* True while the indicator of a hidden tab can still change without
- * further output: a run of output is ongoing or the finish flash plays. */
+ * further output: a run of output is ongoing or a finished mark pulses. */
 bool tab_activity_changing(const struct tab_activity_run *run,
                            int64_t now, uint32_t quiet_ms);

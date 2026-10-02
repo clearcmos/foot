@@ -109,8 +109,7 @@ This fork adds multi-tab support:
 * `footclient --tab` opens a new tab in the focused window
 * Background tabs running a configured process show a dim tint in that
   process's color while it produces output. When it stops, the tab
-  pulses three times and stays brightly highlighted until you switch to
-  it (`[tab-bar]` in foot.ini, default: Claude orange, Codex green,
+  pulses until you switch to it (`[tab-bar]` in foot.ini, default: Claude orange, Codex green,
   Antigravity blue)
 * Ctrl+Click to open URLs in the default browser; URLs underline on hover
 * Ctrl+Click a file name in the output (`render.c:3058`, `~/notes.md`, a

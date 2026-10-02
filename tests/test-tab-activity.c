@@ -36,7 +36,8 @@ test_activity_state(void)
     assert(tab_activity_changing(&run, 13000, QUIET));
     assert(tab_activity_state(&run, 12600 + TAB_ACTIVITY_FLASH_MS, QUIET) ==
            TAB_ACTIVITY_DONE);
-    assert(!tab_activity_changing(&run, 12600 + TAB_ACTIVITY_FLASH_MS, QUIET));
+    assert(tab_activity_changing(&run, 12600 + TAB_ACTIVITY_FLASH_MS, QUIET));
+    assert(tab_activity_changing(&run, 12600 + 60000, QUIET));
 
     /* A later one-off redraw keeps the mark without flashing again */
     tab_activity_record_output(&run, 20000, QUIET);
@@ -96,16 +97,10 @@ test_flash_level(void)
     const double quarter = tab_activity_flash_level(half / 2);
     assert(quarter > 0. && quarter < 1.);
 
-    /* Peaks twice during the flash and ends on the third peak */
-    int peaks = 0;
-    for (int64_t t = 0; t < TAB_ACTIVITY_FLASH_MS; t++) {
-        if (tab_activity_flash_level(t) == 1.)
-            peaks++;
-    }
-    assert(peaks == 2);
+    /* Keeps pulsing: one peak per period, never settling */
     assert(tab_activity_flash_level(TAB_ACTIVITY_FLASH_MS) == 1.);
-    assert(tab_activity_flash_level(TAB_ACTIVITY_FLASH_MS - 1) > 0.99);
-    assert(tab_activity_flash_level(TAB_ACTIVITY_FLASH_MS + 5000) == 1.);
+    assert(tab_activity_flash_level(TAB_ACTIVITY_FLASH_PERIOD_MS * 100) == 0.);
+    assert(tab_activity_flash_level(TAB_ACTIVITY_FLASH_PERIOD_MS * 100 + half) == 1.);
 }
 
 int

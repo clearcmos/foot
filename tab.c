@@ -1061,8 +1061,8 @@ fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data)
     ssize_t r = read(fd, &expirations, sizeof(expirations));
     (void)r;
 
-    /* Keep ticking while a hidden tab's run of output is ongoing or its
-     * finish flash plays; the final tick draws the steady done mark */
+    /* Keep ticking while a hidden tab's run of output is ongoing or a
+     * finished mark pulses; showing the tab stops the timer */
     const int64_t now = now_ms();
     const uint32_t quiet_ms = win->term->conf->tab_bar.activity_pulse_quiet_ms;
     bool any_activity = false;
@@ -1133,7 +1133,7 @@ tab_bar_activity_state(struct tab_bar *tb, struct tab *tab,
 
     const enum tab_activity_state state =
         tab_activity_state(&tab->activity, now, quiet_ms);
-    if (state == TAB_ACTIVITY_FINISHED) {
+    if (state == TAB_ACTIVITY_FINISHED || state == TAB_ACTIVITY_DONE) {
         *flash_level = tab_activity_flash_level(
             tab_activity_done_age(&tab->activity, now, quiet_ms));
     }

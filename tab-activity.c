@@ -216,10 +216,9 @@ tab_activity_flash_level(int64_t age_ms)
 {
     if (age_ms <= 0)
         return 0.;
-    if (age_ms >= TAB_ACTIVITY_FLASH_MS)
-        return 1.;
 
-    /* Triangle wave rising from 0, eased at its turning points */
+    /* Triangle wave rising from 0, eased at its turning points, repeating
+     * for as long as the mark is shown */
     const double p = (double)(age_ms % TAB_ACTIVITY_FLASH_PERIOD_MS) /
         TAB_ACTIVITY_FLASH_PERIOD_MS;
     const double tri = p < .5 ? 2. * p : 2. - 2. * p;
@@ -232,5 +231,5 @@ tab_activity_changing(const struct tab_activity_run *run, int64_t now,
 {
     return !run->visible &&
         (in_run(run, now, quiet_ms) ||
-         tab_activity_state(run, now, quiet_ms) == TAB_ACTIVITY_FINISHED);
+         tab_activity_done_age(run, now, quiet_ms) >= 0);
 }

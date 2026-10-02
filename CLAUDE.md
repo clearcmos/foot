@@ -126,8 +126,9 @@ Key implementation details:
   the active tab, not any pane in split mode): a hidden tab shows a dim
   steady tint while its matched process produces a run of output. When the
   run ends (`activity-pulse-quiet-ms` of silence, default 700) the tab
-  flashes three times over `TAB_ACTIVITY_FLASH_MS` (2 s), ending on a peak,
-  and stays bright until the tab is shown. A run must last
+  pulses (period `TAB_ACTIVITY_FLASH_PERIOD_MS`, 800 ms) until the tab is
+  shown; the first `TAB_ACTIVITY_FLASH_MS` is the finished state, the rest
+  done, and both draw the same wave. A run must last
   `TAB_ACTIVITY_MIN_RUN_MS` (1 s) to count, because Claude Code repaints
   on focus-out and that burst must not mark the tab. The
   working/finished/done state machine and the flash curve
@@ -137,7 +138,7 @@ Key implementation details:
   `tab_on_output()` and derives visibility lazily, so tab switches need no
   hook. `term_foreground_pgid()` / `term_process_comm()` in `terminal.c` read
   the foreground process from `/proc`, and `render.c` draws the indicator.
-  The pulse timer ticks while a run or a flash is in progress and only
+  The pulse timer ticks while a run is in progress or a finished mark pulses and only
   marks the bar dirty; the render hook renders just the bar and then
   commits the window surface, since the bar is a synchronized subsurface
   whose commit does not show until its parent commits. Replacing the output
@@ -241,8 +242,9 @@ Dated reasons for choices that are not obvious from the code.
   while it runs. The start of motion catches the eye and the end of motion
   does not (Abrams & Christ 2003), so the old pulse-while-working drew
   attention when work began and let the finish, the moment that needs the
-  user, pass unnoticed. The flash is three pulses, not an endless pulse,
-  so several finished tabs do not keep moving.
+  user, pass unnoticed. The finished mark pulses until the tab is
+  shown (changed 2026-10-01 from three pulses that settled steady, which
+  was too easy to miss).
 - 2026-09-27: Each action's default bindings stay adjacent in
   `add_default_key_bindings()`. Overriding an action removes its defaults
   as one contiguous run, so the split-up `spawn-terminal` and
