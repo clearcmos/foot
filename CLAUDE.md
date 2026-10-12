@@ -227,6 +227,11 @@ The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-ali
 
 Dated reasons for choices that are not obvious from the code.
 
+- 2026-10-12: `wayl_win_destroy()` unmaps the main surface by destroying the
+  xdg_toplevel and xdg_surface, not by committing a NULL buffer. KWin drops
+  the window contents on a NULL commit, so the close animation showed only
+  the title bar. Destroying the role still unmaps the surface and delivers
+  the keyboard and pointer leave events while the wl_surface is alive.
 - 2026-09-28: Ctrl+click on a file name shows the file selected in the file
   manager instead of opening it, as the user asked; `[url] file-launch`
   changes that. The default goes through the FileManager1 D-Bus interface

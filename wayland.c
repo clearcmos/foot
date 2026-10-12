@@ -2236,10 +2236,25 @@ wayl_win_destroy(struct wl_window *win)
 
     wayl_roundtrip(win->term->wl);
 
-        /* Main window */
+    /*
+     * Main window. Unmap it by destroying its shell role rather than
+     * committing a NULL buffer: KWin drops the window contents on a
+     * NULL commit, so the close animation would show only the
+     * decoration.
+     */
     win->unmapped = true;
-    wl_surface_attach(win->surface.surf, NULL, 0, 0);
-    wl_surface_commit(win->surface.surf);
+    if (win->xdg_toplevel_decoration != NULL) {
+        zxdg_toplevel_decoration_v1_destroy(win->xdg_toplevel_decoration);
+        win->xdg_toplevel_decoration = NULL;
+    }
+    if (win->xdg_toplevel != NULL) {
+        xdg_toplevel_destroy(win->xdg_toplevel);
+        win->xdg_toplevel = NULL;
+    }
+    if (win->xdg_surface != NULL) {
+        xdg_surface_destroy(win->xdg_surface);
+        win->xdg_surface = NULL;
+    }
     wayl_roundtrip(win->term->wl);
 
     tll_free(win->on_outputs);
