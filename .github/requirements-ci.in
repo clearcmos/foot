@@ -4,4 +4,4 @@
 codespell==2.4.3
 gcovr==8.6
 mypy==2.4.0
-ruff==0.15.20
+ruff==0.17.0
