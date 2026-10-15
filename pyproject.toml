@@ -8,3 +8,8 @@ strict = true
 [tool.codespell]
 skip = 'pyproject.toml,./subprojects,./pkg,./src,./foot-custom,./bld,./build,./build-*,*.pkg.tar.zst,foot.info,./unicode,./venv'
 ignore-regex = 'terminfo capability `rin`|\* Simon Ser|\* \[zar\]\(https://codeberg.org/zar\)|iterm theme|iterm.toml|iterm/OneHalfDark.itermcolors'
+
+[tool.ruff.lint]
+# ruff 0.17 widened its default rule set. Pin the earlier defaults so upstream's
+# scripts are checked as before instead of being rewritten in the fork.
+select = ['E4', 'E7', 'E9', 'F']
