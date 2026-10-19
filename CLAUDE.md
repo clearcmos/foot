@@ -227,6 +227,12 @@ The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-ali
 
 Dated reasons for choices that are not obvious from the code.
 
+- 2026-10-19: `term_destroy()` unregisters each active notification
+  helper from the reaper before freeing it. A desktop notification's
+  `notify-send --wait` helper outlives a closed tab or footclient window,
+  and its exit callback (`notif_done()`) then ran on the freed terminal and
+  crashed the server. The reaper still reaps the helper. Upstream has the
+  same bug in server mode.
 - 2026-10-12: `wayl_win_destroy()` unmaps the main surface by destroying the
   xdg_toplevel and xdg_surface, not by committing a NULL buffer. KWin drops
   the window contents on a NULL commit, so the close animation showed only

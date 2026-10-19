@@ -2228,6 +2228,11 @@ term_destroy(struct terminal *term)
 
     notify_free(term, &term->kitty_notification);
     tll_foreach(term->active_notifications, it) {
+        /* The helper can outlive this terminal (a closed tab or
+         * footclient window); its exit callback must not see a freed
+         * term. The reaper still reaps it. */
+        if (it->item.pid > 0)
+            reaper_del(term->reaper, it->item.pid);
         notify_free(term, &it->item);
         tll_remove(term->active_notifications, it);
     }
