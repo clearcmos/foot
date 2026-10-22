@@ -31,18 +31,32 @@ bool tab_activity_processes_valid(const char *configured_processes);
 
 /*
  * Output from a matching process in a hidden tab first marks the tab as
- * working. Once it stops, the tab pulses (finished, then done) until it is
- * shown. Only a run of output lasting
- * TAB_ACTIVITY_MIN_RUN_MS counts, so one-off redraws, like a TUI repainting
- * when it loses focus, do not mark a tab. A run ends after quiet_ms without
- * output.
+ * working. Once it stops, the tab is marked (finished, then done) until it
+ * is shown, and the mark animates as enum tab_activity_finish says. Only a
+ * run of output lasting TAB_ACTIVITY_MIN_RUN_MS counts, so one-off redraws,
+ * like a TUI repainting when it loses focus, do not mark a tab. A run ends
+ * after quiet_ms without output.
  */
 #define TAB_ACTIVITY_MIN_RUN_MS 1000
 
-/* The finished mark pulses with this period until the tab is shown. The
- * first TAB_ACTIVITY_FLASH_MS of it is the finished state, the rest done. */
+/* The finish flash: pulses of this period, ending on the third peak so it
+ * runs into the bright mark. The first TAB_ACTIVITY_FLASH_MS after a run
+ * ends is the finished state, the rest done. */
 #define TAB_ACTIVITY_FLASH_PERIOD_MS 800
 #define TAB_ACTIVITY_FLASH_MS 2000
+
+/* A repeated flash starts and ends on a peak, so it leaves the bright mark
+ * and returns to it without a jump: the finish flash after its first rise */
+#define TAB_ACTIVITY_REFLASH_MS \
+    (TAB_ACTIVITY_FLASH_MS - TAB_ACTIVITY_FLASH_PERIOD_MS / 2)
+
+/* What the finished mark does until the tab is shown */
+enum tab_activity_finish {
+    TAB_ACTIVITY_FINISH_FLASH,   /* flash, then stay bright */
+    TAB_ACTIVITY_FINISH_REPEAT,  /* flash, then flash again every repeat_ms */
+    TAB_ACTIVITY_FINISH_PULSE,   /* pulse without settling */
+    TAB_ACTIVITY_FINISH_STEADY,  /* stay bright, never animate */
+};
 
 enum tab_activity_state {
     TAB_ACTIVITY_NONE,
@@ -78,11 +92,17 @@ enum tab_activity_state tab_activity_state(const struct tab_activity_run *run,
 int64_t tab_activity_done_age(const struct tab_activity_run *run,
                               int64_t now, uint32_t quiet_ms);
 
-/* Brightness of the finished pulse in [0, 1], age_ms after the run ended.
- * Starts at 0 and repeats every TAB_ACTIVITY_FLASH_PERIOD_MS. */
-double tab_activity_flash_level(int64_t age_ms);
+/* Brightness of the finished mark in [0, 1], age_ms after the run ended.
+ * Starts at 0 except for TAB_ACTIVITY_FINISH_STEADY. repeat_ms, used by
+ * TAB_ACTIVITY_FINISH_REPEAT, must be at least TAB_ACTIVITY_FLASH_MS. */
+double tab_activity_flash_level(int64_t age_ms,
+                                enum tab_activity_finish finish,
+                                uint32_t repeat_ms);
 
-/* True while the indicator of a hidden tab can still change without
- * further output: a run of output is ongoing or a finished mark pulses. */
-bool tab_activity_changing(const struct tab_activity_run *run,
-                           int64_t now, uint32_t quiet_ms);
+/* Milliseconds until the indicator of a hidden tab next changes without
+ * further output: 0 while it changes now (a run of output is ongoing or
+ * the finished mark animates), -1 when it will not change. */
+int64_t tab_activity_next_change(const struct tab_activity_run *run,
+                                 int64_t now, uint32_t quiet_ms,
+                                 enum tab_activity_finish finish,
+                                 uint32_t repeat_ms);

@@ -9,6 +9,7 @@
 #include <tllist.h>
 #include <fcft/fcft.h>
 
+#include "tab-activity.h"
 #include "user-notification.h"
 
 #define DEFINE_LIST(type) \
@@ -427,6 +428,8 @@ struct config {
         char *activity_pulse_processes;
         uint32_t activity_pulse_color;
         uint32_t activity_pulse_quiet_ms;
+        enum tab_activity_finish activity_pulse_finish;
+        uint32_t activity_pulse_repeat_ms;
         char *close_passthrough_processes;
     } tab_bar;
 

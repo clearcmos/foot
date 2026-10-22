@@ -3110,7 +3110,8 @@ render_tab_bar(struct terminal *term)
         }
 
         /* A dim mark while a configured process works in a hidden tab.
-         * Once it stops, the mark pulses until the tab is shown */
+         * Once it stops, the mark brightens and animates as
+         * activity-pulse-finish says until the tab is shown */
         if (activity != TAB_ACTIVITY_NONE) {
             const double dim = 0.30, bright = 0.85;
             const double level =

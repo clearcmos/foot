@@ -125,10 +125,17 @@ Key implementation details:
   color use `activity-pulse-color` (`00cc33`). Only hidden tabs show it (not
   the active tab, not any pane in split mode): a hidden tab shows a dim
   steady tint while its matched process produces a run of output. When the
-  run ends (`activity-pulse-quiet-ms` of silence, default 700) the tab
-  pulses (period `TAB_ACTIVITY_FLASH_PERIOD_MS`, 800 ms) until the tab is
-  shown; the first `TAB_ACTIVITY_FLASH_MS` is the finished state, the rest
-  done, and both draw the same wave. A run must last
+  run ends (`activity-pulse-quiet-ms` of silence, default 700) the tab is
+  marked until it is shown, and `activity-pulse-finish` picks what the mark
+  does: `flash` (three pulses of `TAB_ACTIVITY_FLASH_PERIOD_MS`, 800 ms,
+  over `TAB_ACTIVITY_FLASH_MS`, then bright), `repeat` (the default: flash,
+  then a two-dip flash from and back to the peak every
+  `activity-pulse-repeat-ms`, default 30000, minimum one flash), `pulse`
+  (no settling) or `steady` (bright, no animation). The first
+  `TAB_ACTIVITY_FLASH_MS` is the finished state, the rest done. The pulse
+  timer ticks every 50 ms only while something animates; between repeated
+  flashes it sleeps until the next one (`tab_activity_next_change()`), and
+  new output re-arms the ticks. A run must last
   `TAB_ACTIVITY_MIN_RUN_MS` (1 s) to count, because Claude Code repaints
   on focus-out and that burst must not mark the tab. The
   working/finished/done state machine and the flash curve
@@ -138,7 +145,7 @@ Key implementation details:
   `tab_on_output()` and derives visibility lazily, so tab switches need no
   hook. `term_foreground_pgid()` / `term_process_comm()` in `terminal.c` read
   the foreground process from `/proc`, and `render.c` draws the indicator.
-  The pulse timer ticks while a run is in progress or a finished mark pulses and only
+  The pulse timer ticks while a run is in progress or a finished mark animates and only
   marks the bar dirty; the render hook renders just the bar and then
   commits the window surface, since the bar is a synchronized subsurface
   whose commit does not show until its parent commits. Replacing the output
@@ -227,6 +234,16 @@ The build enables `-Werror` - warnings are treated as errors. Uses `-fstrict-ali
 
 Dated reasons for choices that are not obvious from the code.
 
+- 2026-10-22: What the finished mark does is configurable
+  (`activity-pulse-finish`), defaulting to `repeat`: a flash at the finish,
+  then a bright mark that flashes again every `activity-pulse-repeat-ms`
+  (30 s). Each flash is a fresh start of motion, which is what catches the
+  eye, so a finish missed while away is still noticed within one interval,
+  without the constant peripheral motion of `pulse` while a finished tab is
+  deliberately left for later. Windows flashes a taskbar button a few times
+  and then leaves it highlighted for the same reason. A finite set of modes
+  in foot.ini, not an in-terminal settings panel: every other indicator
+  setting is there, and foot.ini is often a managed symlink.
 - 2026-10-19: `term_destroy()` unregisters each active notification
   helper from the reaper before freeing it. A desktop notification's
   `notify-send --wait` helper outlives a closed tab or footclient window,
@@ -255,7 +272,7 @@ Dated reasons for choices that are not obvious from the code.
   attention when work began and let the finish, the moment that needs the
   user, pass unnoticed. The finished mark pulses until the tab is
   shown (changed 2026-10-01 from three pulses that settled steady, which
-  was too easy to miss).
+  was too easy to miss; configurable since 2026-10-22).
 - 2026-09-27: Each action's default bindings stay adjacent in
   `add_default_key_bindings()`. Overriding an action removes its defaults
   as one contiguous run, so the split-up `spawn-terminal` and

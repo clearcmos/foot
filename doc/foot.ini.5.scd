@@ -835,8 +835,9 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 *activity-pulse*
 	Boolean. When enabled, a background tab whose foreground process
 	matches *activity-pulse-processes* is tinted dimly while that process
-	is producing terminal output. Once the output stops, the tab pulses
-	until you switch to it, so a finished or waiting agent stands out. The tab you are looking
+	is producing terminal output. Once the output stops, the tab is marked
+	brightly until you switch to it, so a finished or waiting agent stands
+	out; *activity-pulse-finish* sets how the mark moves. The tab you are looking
 	at (and every pane in split mode) shows no indicator. Output only counts once it has continued for about
 	a second, so a one-off redraw, such as a TUI repainting when its tab
 	loses focus, does not mark the tab.
@@ -867,6 +868,26 @@ xdgtoken=95ebdfe56e4f47ddb5bba9d7dc3a2c35
 	silent before its output is considered stopped.
 
 	Default: _700_.
+
+*activity-pulse-finish*
+	What a background tab's mark does once its process stops, until you
+	switch to the tab. One of:
+
+	- *flash*: flashes three times over two seconds, then stays bright.
+	- *repeat*: flashes like *flash*, then flashes again every
+	  *activity-pulse-repeat-ms*, so a finish you missed while away is
+	  still noticed without a constant pulse.
+	- *pulse*: keeps pulsing.
+	- *steady*: turns bright without moving.
+
+	Default: _repeat_.
+
+*activity-pulse-repeat-ms*
+	How often, in milliseconds, a finished tab flashes again when
+	*activity-pulse-finish* is *repeat*. Must be at least _2000_, the
+	length of one flash.
+
+	Default: _30000_.
 
 *close-passthrough-processes*
 	Comma-separated list of foreground process names for which the

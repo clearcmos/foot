@@ -633,6 +633,37 @@ test_section_tab_bar(void)
     test_uint32(
         &ctx, &parse_section_tab_bar, "activity-pulse-quiet-ms",
         &conf.tab_bar.activity_pulse_quiet_ms);
+    test_enum(
+        &ctx, &parse_section_tab_bar, "activity-pulse-finish",
+        4,
+        (const char *[]){"flash", "repeat", "pulse", "steady"},
+        (int []){TAB_ACTIVITY_FINISH_FLASH, TAB_ACTIVITY_FINISH_REPEAT,
+                 TAB_ACTIVITY_FINISH_PULSE, TAB_ACTIVITY_FINISH_STEADY},
+        (int *)&conf.tab_bar.activity_pulse_finish);
+
+    /* A repeat shorter than one flash would never let the mark settle */
+    ctx.key = "activity-pulse-repeat-ms";
+    static const struct {
+        const char *value;
+        uint32_t ms;
+    } valid_repeats[] = {{"2000", 2000}, {"30000", 30000}};
+    for (size_t i = 0; i < ALEN(valid_repeats); i++) {
+        ctx.value = valid_repeats[i].value;
+        if (!parse_section_tab_bar(&ctx) ||
+            conf.tab_bar.activity_pulse_repeat_ms != valid_repeats[i].ms)
+        {
+            BUG("[%s].%s=%s: failed to parse",
+                ctx.section, ctx.key, ctx.value);
+        }
+    }
+    static const char *const invalid_repeats[] = {"0", "1999", "abc"};
+    for (size_t i = 0; i < ALEN(invalid_repeats); i++) {
+        ctx.value = invalid_repeats[i];
+        if (parse_section_tab_bar(&ctx)) {
+            BUG("[%s].%s=%s: did not fail to parse as expected",
+                ctx.section, ctx.key, ctx.value);
+        }
+    }
     test_string(
         &ctx, &parse_section_tab_bar, "close-passthrough-processes",
         &conf.tab_bar.close_passthrough_processes);

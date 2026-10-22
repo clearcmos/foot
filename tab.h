@@ -61,8 +61,10 @@ struct tab_bar {
     int *tab_x_ends;             /* cumulative x end positions for hit-testing */
     bool dirty;
 
-    /* Activity pulse timer (-1 when idle) */
+    /* Activity pulse timer (-1 when idle). Between repeated flashes it
+     * sleeps until the next one instead of ticking. */
     int pulse_timer_fd;
+    bool pulse_timer_ticking;
 
     /* Right-click context menu */
     bool ctx_menu_visible;

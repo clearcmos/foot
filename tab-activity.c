@@ -211,25 +211,83 @@ tab_activity_state(const struct tab_activity_run *run, int64_t now,
         : TAB_ACTIVITY_DONE;
 }
 
-double
-tab_activity_flash_level(int64_t age_ms)
+/* Triangle wave rising from 0, eased at its turning points */
+static double
+wave(int64_t t_ms)
 {
-    if (age_ms <= 0)
+    if (t_ms <= 0)
         return 0.;
 
-    /* Triangle wave rising from 0, eased at its turning points, repeating
-     * for as long as the mark is shown */
-    const double p = (double)(age_ms % TAB_ACTIVITY_FLASH_PERIOD_MS) /
+    const double p = (double)(t_ms % TAB_ACTIVITY_FLASH_PERIOD_MS) /
         TAB_ACTIVITY_FLASH_PERIOD_MS;
     const double tri = p < .5 ? 2. * p : 2. - 2. * p;
     return tri * tri * (3. - 2. * tri);
 }
 
-bool
-tab_activity_changing(const struct tab_activity_run *run, int64_t now,
-                      uint32_t quiet_ms)
+/* Time into the current repeated flash, or -1 between flashes */
+static int64_t
+reflash_time(int64_t age_ms, uint32_t repeat_ms)
 {
-    return !run->visible &&
-        (in_run(run, now, quiet_ms) ||
-         tab_activity_done_age(run, now, quiet_ms) >= 0);
+    const int64_t t = age_ms % repeat_ms;
+    return age_ms >= repeat_ms && t < TAB_ACTIVITY_REFLASH_MS ? t : -1;
+}
+
+double
+tab_activity_flash_level(int64_t age_ms, enum tab_activity_finish finish,
+                         uint32_t repeat_ms)
+{
+    switch (finish) {
+    case TAB_ACTIVITY_FINISH_STEADY:
+        return 1.;
+
+    case TAB_ACTIVITY_FINISH_PULSE:
+        return wave(age_ms);
+
+    case TAB_ACTIVITY_FINISH_FLASH:
+    case TAB_ACTIVITY_FINISH_REPEAT:
+        break;
+    }
+
+    if (age_ms < TAB_ACTIVITY_FLASH_MS)
+        return wave(age_ms);
+    if (finish == TAB_ACTIVITY_FINISH_FLASH)
+        return 1.;
+
+    const int64_t t = reflash_time(age_ms, repeat_ms);
+    return t < 0 ? 1. : wave(TAB_ACTIVITY_FLASH_PERIOD_MS / 2 + t);
+}
+
+int64_t
+tab_activity_next_change(const struct tab_activity_run *run, int64_t now,
+                         uint32_t quiet_ms, enum tab_activity_finish finish,
+                         uint32_t repeat_ms)
+{
+    if (run->visible)
+        return -1;
+    if (in_run(run, now, quiet_ms))
+        return 0;
+
+    const int64_t age = tab_activity_done_age(run, now, quiet_ms);
+    if (age < 0)
+        return -1;
+
+    switch (finish) {
+    case TAB_ACTIVITY_FINISH_STEADY:
+        return -1;
+
+    case TAB_ACTIVITY_FINISH_PULSE:
+        return 0;
+
+    case TAB_ACTIVITY_FINISH_FLASH:
+    case TAB_ACTIVITY_FINISH_REPEAT:
+        break;
+    }
+
+    if (age < TAB_ACTIVITY_FLASH_MS)
+        return 0;
+    if (finish == TAB_ACTIVITY_FINISH_FLASH)
+        return -1;
+    return reflash_time(age, repeat_ms) >= 0
+        ? 0
+        : repeat_ms - age % repeat_ms;
 }

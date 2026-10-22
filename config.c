@@ -1298,6 +1298,30 @@ parse_section_tab_bar(struct context *ctx)
         return value_to_uint32(
             ctx, 10, &conf->tab_bar.activity_pulse_quiet_ms);
 
+    else if (streq(key, "activity-pulse-finish")) {
+        _Static_assert(
+            sizeof(conf->tab_bar.activity_pulse_finish) == sizeof(int),
+            "enum is not 32-bit");
+        return value_to_enum(
+            ctx,
+            (const char *[]){"flash", "repeat", "pulse", "steady", NULL},
+            (int *)&conf->tab_bar.activity_pulse_finish);
+    }
+
+    else if (streq(key, "activity-pulse-repeat-ms")) {
+        uint32_t repeat_ms;
+        if (!value_to_uint32(ctx, 10, &repeat_ms))
+            return false;
+        if (repeat_ms < TAB_ACTIVITY_FLASH_MS) {
+            LOG_CONTEXTUAL_ERR(
+                "must be at least %d, the length of one flash",
+                TAB_ACTIVITY_FLASH_MS);
+            return false;
+        }
+        conf->tab_bar.activity_pulse_repeat_ms = repeat_ms;
+        return true;
+    }
+
     else if (streq(key, "close-passthrough-processes"))
         return value_to_str(ctx, &conf->tab_bar.close_passthrough_processes);
 
@@ -3685,6 +3709,8 @@ config_load(struct config *conf, const char *conf_path,
                 xstrdup("claude:d97757,codex:10a37f,agy:1a73e8"),
             .activity_pulse_color = 0x00cc33,
             .activity_pulse_quiet_ms = 700,
+            .activity_pulse_finish = TAB_ACTIVITY_FINISH_REPEAT,
+            .activity_pulse_repeat_ms = 30000,
             .close_passthrough_processes = xstrdup("nano"),
         },
         .select_all_passthrough_processes = xstrdup("claude"),

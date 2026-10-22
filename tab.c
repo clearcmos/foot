@@ -105,6 +105,7 @@ tab_bar_destroy(struct tab_bar *tb, struct fdm *fdm)
     if (tb->pulse_timer_fd >= 0) {
         fdm_del(fdm, tb->pulse_timer_fd);
         tb->pulse_timer_fd = -1;
+        tb->pulse_timer_ticking = false;
     }
 
     free(tb->tab_x_ends);
@@ -1019,36 +1020,41 @@ refresh_fg_activity_match(struct tab *tab)
 
 static bool fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data);
 
+/* Ticks while delay_ms is 0, otherwise fires once after delay_ms */
 static void
-pulse_timer_arm(struct wl_window *win)
+pulse_timer_arm(struct wl_window *win, int64_t delay_ms)
 {
     struct tab_bar *tb = &win->tab_bar;
-    if (tb->pulse_timer_fd >= 0)
-        return;
-
     struct fdm *fdm = win->term->fdm;
 
-    int fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
-    if (fd < 0) {
-        LOG_ERRNO("failed to create tab pulse timer");
-        return;
-    }
-    if (!fdm_add(fdm, fd, EPOLLIN, &fdm_pulse_timer, win)) {
-        close(fd);
-        return;
+    if (tb->pulse_timer_fd < 0) {
+        int fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+        if (fd < 0) {
+            LOG_ERRNO("failed to create tab pulse timer");
+            return;
+        }
+        if (!fdm_add(fdm, fd, EPOLLIN, &fdm_pulse_timer, win)) {
+            close(fd);
+            return;
+        }
+        tb->pulse_timer_fd = fd;
     }
 
     /* ~50ms ticks - smooth pulsation without burning CPU */
-    const struct itimerspec timer = {
-        .it_value =    {.tv_sec = 0, .tv_nsec = 50 * 1000000},
-        .it_interval = {.tv_sec = 0, .tv_nsec = 50 * 1000000},
-    };
-    if (timerfd_settime(fd, 0, &timer, NULL) < 0) {
+    const struct timespec tick = {.tv_sec = 0, .tv_nsec = 50 * 1000000};
+    const struct itimerspec timer = delay_ms == 0
+        ? (struct itimerspec){.it_value = tick, .it_interval = tick}
+        : (struct itimerspec){
+            .it_value = {.tv_sec = delay_ms / 1000,
+                         .tv_nsec = delay_ms % 1000 * 1000000}};
+    if (timerfd_settime(tb->pulse_timer_fd, 0, &timer, NULL) < 0) {
         LOG_ERRNO("failed to arm tab pulse timer");
-        fdm_del(fdm, fd);
+        fdm_del(fdm, tb->pulse_timer_fd);
+        tb->pulse_timer_fd = -1;
+        tb->pulse_timer_ticking = false;
         return;
     }
-    tb->pulse_timer_fd = fd;
+    tb->pulse_timer_ticking = delay_ms == 0;
 }
 
 static bool
@@ -1062,24 +1068,32 @@ fdm_pulse_timer(struct fdm *fdm, int fd, int events, void *data)
     (void)r;
 
     /* Keep ticking while a hidden tab's run of output is ongoing or a
-     * finished mark pulses; showing the tab stops the timer */
+     * finished mark animates, sleep until the next repeated flash, and
+     * stop once no indicator can change; the final tick draws the steady
+     * mark */
     const int64_t now = now_ms();
-    const uint32_t quiet_ms = win->term->conf->tab_bar.activity_pulse_quiet_ms;
-    bool any_activity = false;
+    const struct config *conf = win->term->conf;
+    int64_t next = -1;
     tll_foreach(tb->tabs, it) {
         update_activity_visibility(tb, &it->item, now);
-        if (tab_activity_changing(&it->item.activity, now, quiet_ms))
-            any_activity = true;
+        const int64_t tab_next = tab_activity_next_change(
+            &it->item.activity, now, conf->tab_bar.activity_pulse_quiet_ms,
+            conf->tab_bar.activity_pulse_finish,
+            conf->tab_bar.activity_pulse_repeat_ms);
+        if (tab_next >= 0 && (next < 0 || tab_next < next))
+            next = tab_next;
     }
 
     /* Only the bar changes: the render hook picks the dirty flag up on
      * its own, no grid render needed */
     tb->dirty = true;
 
-    if (!any_activity) {
+    if (next < 0) {
         fdm_del(fdm, fd);
         tb->pulse_timer_fd = -1;
-    }
+        tb->pulse_timer_ticking = false;
+    } else if (next > 0 || !tb->pulse_timer_ticking)
+        pulse_timer_arm(win, next);
 
     return true;
 }
@@ -1111,9 +1125,9 @@ tab_on_output(struct terminal *term)
     tab_activity_record_output(
         &tab->activity, now, term->conf->tab_bar.activity_pulse_quiet_ms);
 
-    if (!tab->activity.visible && tb->pulse_timer_fd < 0) {
+    if (!tab->activity.visible && !tb->pulse_timer_ticking) {
         tb->dirty = true;
-        pulse_timer_arm(term->window);
+        pulse_timer_arm(term->window, 0);
     }
 }
 
@@ -1128,14 +1142,17 @@ tab_bar_activity_state(struct tab_bar *tb, struct tab *tab,
         return TAB_ACTIVITY_NONE;
 
     const int64_t now = now_ms();
-    const uint32_t quiet_ms = term->conf->tab_bar.activity_pulse_quiet_ms;
+    const struct config *conf = term->conf;
+    const uint32_t quiet_ms = conf->tab_bar.activity_pulse_quiet_ms;
     update_activity_visibility(tb, tab, now);
 
     const enum tab_activity_state state =
         tab_activity_state(&tab->activity, now, quiet_ms);
     if (state == TAB_ACTIVITY_FINISHED || state == TAB_ACTIVITY_DONE) {
         *flash_level = tab_activity_flash_level(
-            tab_activity_done_age(&tab->activity, now, quiet_ms));
+            tab_activity_done_age(&tab->activity, now, quiet_ms),
+            conf->tab_bar.activity_pulse_finish,
+            conf->tab_bar.activity_pulse_repeat_ms);
     }
     return state;
 }
