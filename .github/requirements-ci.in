@@ -2,6 +2,6 @@
 # uv pip compile .github/requirements-ci.in --universal --generate-hashes \
 #   --output-file .github/requirements-ci.txt
 codespell==2.4.3
-gcovr==8.6
+gcovr==8.8
 mypy==2.4.0
 ruff==0.17.0
